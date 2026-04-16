@@ -1,0 +1,33 @@
+import React from "react";
+
+const STATUS_COLORS = {
+  Pending: { bg: "#f3f4f6", text: "#374151" },
+  Triggered: { bg: "#dbeafe", text: "#1d4ed8" },
+  Acknowledged: { bg: "#fef3c7", text: "#92400e" },
+  Completed: { bg: "#d1fae5", text: "#065f46" },
+  Blocked: { bg: "#fee2e2", text: "#991b1b" },
+};
+
+export default function StatusRenderer(params) {
+  const value = params.value;
+  if (!value) return null;
+
+  const colors = STATUS_COLORS[value] || { bg: "#f3f4f6", text: "#374151" };
+
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: "4px",
+        fontSize: "12px",
+        fontWeight: 500,
+        backgroundColor: colors.bg,
+        color: colors.text,
+        lineHeight: "20px",
+      }}
+    >
+      {value}
+    </span>
+  );
+}

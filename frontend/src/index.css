@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure AG Grid fills its container */
+.ag-theme-alpine {
+  --ag-font-family: inherit;
+}
+
+/* AG Grid row selection highlight */
+.ag-theme-alpine .ag-row-selected {
+  background-color: #eff6ff !important;
+}

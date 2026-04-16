@@ -1,304 +1,386 @@
 # CLAUDE.md
 
-# 📌 Project Name: DeployFlow
-A Production-Grade Deployment Task Orchestration & Automation System
+# DeployFlow — AI Agent Instructions
+
+This file provides context and rules for AI agents working on the DeployFlow codebase.
 
 ---
 
-# 🚀 PROJECT OVERVIEW
+## Project Overview
 
-DeployFlow is a full-stack enterprise workflow system designed to replace Excel-based deployment tracking with a scalable, automated, and event-driven platform.
+DeployFlow is a production-grade deployment task orchestration system. It replaces Excel-based deployment tracking with an automated, event-driven platform.
 
-It manages:
-- Pre-Deployment, Deployment, Post-Deployment tasks
-- Task scheduling and automation
-- Email notifications
-- User acknowledgements
-- Task dependencies (A → B execution order)
-- Real-time Excel-like editing UI
-
----
-
-# 🎯 CORE OBJECTIVE
-
-Build a system where users can:
-- Create tasks like Excel rows
-- Edit tasks inline (spreadsheet style)
-- Delete / update / add rows instantly
-- Automatically trigger workflows based on time + dependencies
-- Track full deployment lifecycle in real time
+**Core capabilities:**
+- Excel-like task management (AG Grid)
+- Dashboard with status overview and recent tasks
+- Automated task scheduling and dependency resolution
+- Email notifications with signed acknowledgement links
+- Audit trail for all changes
+- Docker-based deployment with Nginx frontend
 
 ---
 
-# 🧠 SYSTEM ARCHITECTURE
+## Architecture
 
-Frontend (React + AG Grid Excel UI)
-        ↓
-Backend API (Node.js + Express)
-        ↓
-PostgreSQL (Source of Truth)
-Redis (Queue + Cache + Rate Limiting)
-        ↓
-BullMQ Queue System
-        ↓
-Worker Services (Email + Task Processing)
-        ↓
-Email Provider (SMTP / SendGrid)
+```
+Frontend (React + AG Grid + Nginx)  →  Backend API (Express + Prisma)
+                                              ↓
+                                      PostgreSQL (source of truth)
+                                      Redis (queues + rate limiting)
+                                              ↓
+                                        BullMQ Queues
+                                              ↓
+                                      Worker (Email + Tasks)
+```
+
+Five independent services: `frontend`, `api`, `worker`, `postgres`, `redis`.
 
 ---
 
-# 🧱 TECH STACK
+## Tech Stack
 
-## Frontend
-- React (or Next.js)
-- AG Grid (Excel-like UI)
-- Axios
-- TailwindCSS or Material UI
+| Layer      | Technologies                                              |
+|------------|-----------------------------------------------------------|
+| Frontend   | React 18, AG Grid Community 32, React Router 6 (HashRouter), Axios, TailwindCSS |
+| Backend    | Node.js 20, Express 4, Prisma 5, Zod, JWT, Pino          |
+| Worker     | Node.js 20, BullMQ 5, Nodemailer, Prisma 5               |
+| Database   | PostgreSQL 16                                             |
+| Queue      | Redis 7, BullMQ                                           |
+| Infra      | Docker, Docker Compose, Nginx (gzip, SPA, API proxy)     |
 
-## Backend
-- Node.js + Express
-- Prisma ORM
-- Zod/Joi validation
-- JWT authentication
+---
+
+## Project Structure
+
+```
+backend/
+  server.js                          # Entry point — starts Express + scheduler
+  prisma/schema.prisma               # Database models (User, Task, TaskDependency, AuditLog)
+  prisma/seed.js                     # Sample data seeder
+  src/app.js                         # Express middleware setup + /health endpoint
+  src/config/                        # Environment, logger, prisma client, redis client
+  src/controllers/                   # taskController, authController, acknowledgeController
+  src/routes/                        # Route definitions (tasks, auth, acknowledge)
+  src/middleware/                     # auth (JWT), validate (Zod), validateDependencies, rateLimiter, errorHandler
+  src/services/                      # taskService, schedulerService, dependencyService, queueService
+  src/validators/                    # Zod schemas (taskValidator, authValidator)
+  src/utils/                         # token.js (HMAC-SHA256), errors.js (AppError)
+
+worker/
+  index.js                           # Entry point — starts BullMQ workers
+  src/processors/                    # taskProcessor (Pending→Triggered), emailProcessor (sends email)
+  src/queues/                        # BullMQ worker setup (task-queue, email-queue)
+  src/services/                      # emailService (nodemailer + token signing), emailProducer, dependencyChecker
+  src/config/                        # Environment, logger, prisma client, redis client
+
+frontend/
+  src/App.jsx                        # HashRouter (/login, /acknowledge, /, /tasks with ProtectedRoute)
+  src/components/auth/               # Login.jsx, ProtectedRoute.jsx
+  src/components/dashboard/          # Dashboard.jsx (overview cards + recent tasks table)
+  src/components/grid/               # TaskGrid.jsx, columnDefs.js, cellRenderers/
+  src/components/acknowledge/        # AcknowledgePage.jsx
+  src/components/layout/             # MainLayout.jsx, Header.jsx, Sidebar.jsx
+  src/hooks/                         # useTaskData (CRUD hook)
+  src/services/                      # api.js (Axios + JWT interceptor + 401 redirect), taskService.js
+  src/utils/                         # constants.js (statuses, systems)
+
+docker/
+  docker-compose.yml                 # postgres, redis, api, worker, frontend services
+  api.Dockerfile                     # Node 20 + tini + openssl + non-root user
+  worker.Dockerfile                  # Node 20 + tini + openssl + non-root user
+  frontend.Dockerfile                # Multi-stage: React build → Nginx Alpine
+  api-entrypoint.sh                  # Runs prisma migrate deploy, then starts server
+  nginx/nginx.conf                   # SPA routing, /api/ proxy, gzip compression
+  .env                               # Docker environment variables
+```
+
+---
+
+## Data Model
+
+### Models (Prisma)
+
+- **User** — `id, email, password, name, role, createdAt, updatedAt`
+- **Task** — `id, system, taskName, description, assignedTeam, assignedUserId, plannedStartTime, plannedEndTime, actualStartTime, actualEndTime, status, notes, createdAt, updatedAt`
+- **TaskDependency** — `id, taskId, dependsOnTaskId` (unique constraint on pair)
+- **AuditLog** — `id, taskId, action, field, oldValue, newValue, userId, createdAt`
+
+### Task Statuses
+
+`Pending | Triggered | Acknowledged | Completed | Blocked`
+
+### Allowed Transitions
+
+```
+Pending     → Triggered, Blocked
+Blocked     → Pending
+Triggered   → Acknowledged
+Acknowledged → Completed
+Completed   → (none — immutable)
+```
+
+---
+
+## Task Lifecycle
+
+```
+Pending ──→ Triggered ──→ Acknowledged ──→ Completed
+   │            ↑ (worker)    ↑ (user clicks email link)
+   └──→ Blocked ──→ Pending
+        (deps not met)  (deps later met)
+```
+
+1. **Pending → Triggered:** Scheduler finds eligible task (time + deps), enqueues to BullMQ, worker transitions status
+2. **Triggered → Acknowledged:** User clicks signed link in email, backend validates token + dependencies
+3. **Acknowledged → Completed:** User updates status via grid UI
+4. **Pending ↔ Blocked:** Scheduler manages based on dependency completion state
+
+---
+
+## Frontend Pages & Layout
+
+### Pages
+
+| Route (Hash)      | Component     | Description                                    |
+|-------------------|---------------|------------------------------------------------|
+| `/#/`             | Dashboard     | Status overview cards + recent tasks table     |
+| `/#/tasks`        | TaskGrid      | AG Grid Excel-like editor with full CRUD       |
+| `/#/login`        | Login         | Email/password authentication                  |
+| `/#/acknowledge`  | AcknowledgePage | Public page for email acknowledgement links  |
+
+### Layout (MainLayout)
+
+- **Sidebar** — Dark (bg-gray-900) navigation panel with Dashboard/Tasks links and Logout button
+- **Header** — Page title (dynamic based on route) and logged-in user email
+- **ProtectedRoute** — Redirects to `/#/login` if no token in localStorage
+- **401 Interceptor** — Axios response interceptor clears expired tokens and redirects to login
+
+### Routing
+
+Uses **HashRouter** (not BrowserRouter) for compatibility with:
+- VS Code port forwarding (`/proxy/3004/` path prefix)
+- Nginx SPA serving
+- Any reverse proxy setup
+
+---
+
+## API Endpoints
+
+| Method | Path                        | Auth   | Description                    |
+|--------|-----------------------------|--------|--------------------------------|
+| POST   | /api/auth/register          | Public | Create user account            |
+| POST   | /api/auth/login             | Public | Get JWT token (24h expiry)     |
+| GET    | /api/tasks                  | JWT    | List tasks (filterable)        |
+| GET    | /api/tasks/:id              | JWT    | Get single task                |
+| POST   | /api/tasks                  | JWT    | Create task                    |
+| PUT    | /api/tasks/:id              | JWT    | Update task (validates transitions, deps) |
+| DELETE | /api/tasks/:id              | JWT    | Delete task                    |
+| GET    | /api/tasks/:id/dependencies | JWT    | Check dependency status        |
+| GET    | /api/acknowledge            | Token  | Acknowledge task via email link |
+| GET    | /health                     | Public | Health check (Docker)          |
+| GET    | /api/scheduler/status       | Public | Scheduler stats                |
+| POST   | /api/scheduler/trigger      | Public | Manual scheduler tick (testing) |
+
+---
+
+## Critical Rules
+
+These rules are **non-negotiable**. Every code change must maintain them.
+
+### 1. UI is NOT Source of Truth
+- Backend validates everything: status transitions, dependencies, field types
+- Frontend blocks are cosmetic — backend independently enforces all rules
+
+### 2. No Direct Email Sending from API
+- API never imports nodemailer or any email library
+- Emails are sent exclusively by the worker via BullMQ email-queue
+- Flow: Scheduler → task-queue → Worker → email-queue → Worker → Nodemailer
+
+### 3. No Bypassing Dependency Checks
+- Dependencies are validated at FOUR layers independently:
+  - **API:** `validateDependencies` middleware + `taskService.assertDependenciesMet()`
+  - **Scheduler:** `canTaskExecute()` before enqueuing
+  - **Worker:** `canTaskExecute()` before transitioning Pending→Triggered
+  - **Acknowledge:** `canTaskExecute()` before transitioning Triggered→Acknowledged
+- Circular dependencies detected via DFS in `dependencyService.wouldCreateCycle()`
+
+### 4. No Duplicate Jobs
+- BullMQ jobs use deterministic `jobId` values: `task-trigger-{taskId}`, `email-{taskId}-triggered`
+- Processors have idempotency checks (skip if status already advanced)
+
+### 5. Idempotent Operations
+- Acknowledge endpoint returns 200 "already acknowledged" on repeat clicks
+- Task and email processors skip already-processed tasks
+- Audit logs are created atomically within transactions
+
+### 6. Completed Tasks Are Immutable
+- `taskService.update()` rejects any modification to Completed tasks
+- Frontend AG Grid blocks editing on Completed rows
+- No status can transition out of Completed
+
+---
+
+## Scheduler Design
+
+- Runs inside the API process on a 60-second `setInterval`
+- **Phase 1 (Unblock):** Re-evaluates `Blocked` tasks — transitions back to `Pending` if dependencies now met
+- **Phase 2 (Queue):** Finds `Pending` tasks where `plannedStartTime <= now` — enqueues if deps met, blocks if not
+- Does NOT send emails or transition to `Triggered` — only enqueues to BullMQ
+- Stats available at `GET /api/scheduler/status`
+
+---
 
 ## Queue System
-- Redis
-- BullMQ (job processing)
 
-## Database
-- PostgreSQL (primary DB)
+| Queue        | Producer          | Consumer               | Retry          |
+|--------------|-------------------|------------------------|----------------|
+| task-queue   | schedulerService  | taskProcessor (worker) | 3 attempts, 5s exponential |
+| email-queue  | taskProcessor     | emailProcessor (worker)| 5 attempts, 3s exponential |
 
-## Infrastructure
-- Docker & Docker Compose
-- Optional Nginx reverse proxy
+Job cleanup: completed jobs removed after 24h, failed after 7 days.
 
 ---
 
-# 🧩 CORE DATA MODEL
+## Email System
 
-## Task
-- id
-- system (FOL, SAP GW, Fiserv, etc.)
-- task_name
-- description
-- assigned_team
-- assigned_user
-- planned_start_time
-- planned_end_time
-- actual_start_time
-- actual_end_time
-- status (Pending | Triggered | Acknowledged | Completed | Blocked)
-- notes
-
-## TaskDependency
-- id
-- task_id
-- depends_on_task_id
+- **Transport:** Nodemailer with real SMTP or JSON mock (when SMTP unconfigured)
+- **Token:** HMAC-SHA256 signed, base64url-encoded payload with expiry (7 days default)
+- **Format:** `base64url(JSON{taskId, exp}).base64url(signature)`
+- **Verification:** `backend/src/utils/token.js` — timing-safe comparison, expiry check, taskId match
+- **Rate limiting:** 15 requests/minute per IP on acknowledge endpoint (Redis sliding window)
 
 ---
 
-# 🔄 TASK LIFECYCLE
+## Authentication
 
-Pending → Triggered → Acknowledged → Completed  
-Blocked (if dependencies not met)
-
----
-
-# 🔗 DEPENDENCY ENGINE RULES
-
-- A task can depend on one or more tasks
-- Task cannot start unless ALL dependencies are Completed
-- Prevent circular dependencies
-- Dependency validation must occur at:
-  - API layer
-  - Scheduler layer
-  - Worker layer
+- JWT tokens signed with `JWT_SECRET`, 24-hour expiry
+- Payload: `{ sub: userId, email, role }`
+- Frontend stores token in `localStorage`, Axios interceptor attaches `Authorization: Bearer` header
+- 401 response interceptor clears token and redirects to `/#/login`
+- `ProtectedRoute` redirects to `/login` if no token
+- Acknowledge endpoint is public (protected by HMAC token, not JWT)
 
 ---
 
-# 🖥️ FRONTEND (EXCEL-LIKE UI REQUIREMENTS)
+## Docker
 
-## UI Behavior
-- Must behave like Excel / Google Sheets
-- Inline editing for all cells
-- Add / delete rows dynamically
-- Copy-paste bulk rows supported
-- Real-time updates to backend (debounced)
+### Services
 
-## Grid Features (AG Grid)
-- Column editing
-- Dropdowns for status
-- Dropdown for dependencies
-- Date/time picker support
-- Row selection
-- Keyboard navigation
+| Service    | Image              | Port (Host) | Health Check              |
+|------------|--------------------|-------------|---------------------------|
+| postgres   | postgres:16-alpine | 5438        | `pg_isready` every 5s     |
+| redis      | redis:7-alpine     | 6383        | `redis-cli ping` every 5s |
+| api        | Node 20 + tini     | 3003        | `wget /health` every 10s  |
+| worker     | Node 20 + tini     | —           | —                         |
+| frontend   | Nginx Alpine       | 3004        | —                         |
 
-## Editable Fields
-- system
-- task_name
-- assigned_user
-- planned_start_time
-- status
-- dependencies
+### Startup Order
+`postgres (healthy) + redis (healthy) → api (healthy) → frontend`
+`postgres (healthy) + redis (healthy) → worker`
 
-## Rules
-- Block editing if task is Completed or Locked
-- Block updates if dependencies are not satisfied
-- UI is NOT source of truth
+### Nginx (frontend)
+- Serves React SPA with `try_files $uri $uri/ /index.html`
+- Proxies `/api/` to `http://api:3001/api/`
+- Gzip compression enabled (JS, CSS, JSON — ~73% size reduction)
 
----
+### Prisma Binary Targets
+`schema.prisma` includes `binaryTargets = ["native", "linux-musl-openssl-3.0.x"]` for Docker Alpine + OpenSSL 3.x compatibility.
 
-# ⚙️ BACKEND RESPONSIBILITIES
+### Build Args
+- `REACT_APP_API_URL=./api` — relative API URL for proxy compatibility
+- `PUBLIC_URL=.` — relative asset paths for VS Code port forwarding compatibility
 
-- Enforce all business rules
-- Validate dependency chains
-- Prevent invalid status transitions
-- Maintain audit logs
-- Ensure idempotent operations
+All services use `restart: unless-stopped` and communicate via a `deployflow` bridge network.
 
 ---
 
-# ⏱️ SCHEDULER DESIGN
+## Development Commands
 
-- Runs every minute (cron OR worker trigger)
-- ONLY pushes eligible tasks into queue
-- Does NOT send emails directly
+```bash
+# Backend
+cd backend
+npm run dev              # Start with nodemon
+npm run start            # Production start
+npx prisma migrate dev   # Create/apply migration
+npx prisma studio        # Visual DB browser
+npm run db:seed          # Seed sample data
 
-Logic:
-- If current_time >= planned_start_time
-- AND status = Pending
-- AND dependencies = satisfied
-→ push to Redis queue
+# Worker
+cd worker
+npm run dev              # Start with nodemon
+npm run start            # Production start
 
-Else:
-→ mark as Blocked
+# Frontend
+cd frontend
+npm start                # Dev server on :3000
+npm run build            # Production build
 
----
-
-# 📦 QUEUE SYSTEM (BULLMQ + REDIS)
-
-Queues:
-- email-queue → sends emails
-- task-queue → processes task transitions
-
-Features:
-- Retry with exponential backoff
-- Delayed jobs supported
-- Idempotent job processing (no duplicates)
-
----
-
-# 📧 EMAIL SYSTEM
-
-- Triggered only via worker
-- Includes acknowledgement link:
-
-/acknowledge?task_id=ID&token=SECURE_TOKEN
-
-- Must support retry logic
-- Must prevent duplicate emails
+# Docker
+cd docker
+docker compose up --build -d      # Start all services
+docker compose logs -f api        # View API logs
+docker compose logs -f worker     # View worker logs
+docker compose logs -f frontend   # View frontend logs
+docker compose down -v            # Stop and remove data
+```
 
 ---
 
-# 🔁 ACKNOWLEDGEMENT FLOW
+## Environment Variables
 
-1. User receives email
-2. Clicks acknowledgement link
-3. Backend validates token
-4. Updates:
-   - status → Acknowledged
-   - actual_start_time = now
+| Variable             | Services       | Required | Default              |
+|----------------------|----------------|----------|----------------------|
+| DATABASE_URL         | backend, worker | Yes     | —                    |
+| REDIS_HOST           | backend, worker | No      | localhost            |
+| REDIS_PORT           | backend, worker | No      | 6379                 |
+| JWT_SECRET           | backend        | Yes      | —                    |
+| ACK_TOKEN_SECRET     | backend, worker | Yes     | dev fallback         |
+| API_PORT             | backend        | No       | 3001                 |
+| FRONTEND_URL         | backend, worker | No      | http://localhost:3004 |
+| SMTP_HOST/PORT/USER/PASS | worker     | No       | mock transport       |
+| ACK_TOKEN_EXPIRY_MS  | worker         | No       | 604800000 (7 days)   |
 
----
+### Docker-Only
 
-# 🐳 DOCKER ARCHITECTURE
-
-Services:
-- api (Node.js backend)
-- worker (BullMQ processor)
-- redis
-- postgres
-
-Rules:
-- Worker runs independently from API
-- System must support horizontal scaling
-- Stateless API design
-
----
-
-# 🔐 SECURITY REQUIREMENTS
-
-- JWT authentication
-- Secure acknowledgement tokens (signed)
-- Input validation (Zod/Joi)
-- Rate limiting via Redis
-- Prevent unauthorized task modification
+| Variable          | Default      |
+|-------------------|--------------|
+| POSTGRES_PORT     | 5438         |
+| REDIS_PORT        | 6383         |
+| API_PORT          | 3003         |
+| FRONTEND_PORT     | 3004         |
 
 ---
 
-# 📈 PRODUCTION REQUIREMENTS
+## Key Implementation Details
 
-- Retry mechanism for all background jobs
-- Centralized logging (Winston/Pino)
-- Error handling at all layers
-- Audit trail for all task changes
-- No duplicate email sending
-- Idempotent API design
+### Dependency Validation (`dependencyService.js`)
+- `canTaskExecute(taskId)` — returns `{ executable, blockingTasks[] }`
+- `assertDependenciesMet(taskId)` — throws AppError if any dep not Completed
+- `wouldCreateCycle(taskId, targetIds)` — iterative DFS on full graph
+- `setDependencies(taskId, ids)` — validates existence, self-ref, cycles, then atomically replaces
 
----
+### Task Service Status Transitions (`taskService.js`)
+- `ALLOWED_TRANSITIONS` map enforces valid status flow
+- `STATUS_REQUIRES_DEPS_MET` set = `["Triggered", "Acknowledged"]`
+- Double validation: middleware pre-checks + service re-checks independently
 
-# 🔄 DATA FLOW
+### Audit Logging
+- Every task field change logged with `{taskId, action, field, oldValue, newValue}`
+- Created atomically in same transaction as the update
+- Actions: `CREATED`, `UPDATED`, `EMAIL_SENT`
 
-User Action (UI Excel Edit)
-        ↓
-Frontend (AG Grid)
-        ↓
-Debounced API call
-        ↓
-Backend validation
-        ↓
-PostgreSQL update
-        ↓
-Scheduler picks eligible tasks
-        ↓
-Redis Queue
-        ↓
-Worker processes job
-        ↓
-Email sent + status updated
+### Frontend Grid Updates (`TaskGrid.jsx`)
+- Per-row debounce (400ms) accumulates field changes before API call
+- On failure: alerts user + refetches all tasks to resync with backend
+- Completed rows are non-editable (AG Grid `editable` function checks status)
 
----
+### Dashboard (`Dashboard.jsx`)
+- Fetches all tasks via `useTaskData` hook
+- Displays status count cards (Pending, Triggered, Acknowledged, Completed, Blocked)
+- Shows recent tasks table (last 8, sorted by update time)
+- Cards link to the Tasks page
 
-# 🚨 CRITICAL RULES
-
-- UI is NOT source of truth
-- Backend must validate everything
-- No direct email sending from API
-- No bypassing dependency checks
-- No duplicate jobs allowed
-- Always ensure idempotency
-
----
-
-# 💡 FUTURE IMPROVEMENTS
-
-- Real-time WebSocket updates
-- Gantt chart view of deployments
-- Slack / Teams integration
-- Role-based access control (RBAC)
-- Multi-environment deployment tracking
-- Audit dashboard
-
----
-
-# 🎯 FINAL GOAL
-
-DeployFlow should function as:
-
-✔ Excel-like task management system  
-✔ Workflow automation engine  
-✔ Distributed job processing system  
-✔ Production-grade deployment orchestration tool  
-✔ Scalable DevOps coordination platform  
-
----
+### Sidebar (`Sidebar.jsx`)
+- Dark theme (bg-gray-900) with icon + label navigation
+- NavLink with active state highlighting (bg-blue-600)
+- Logout button clears localStorage token and navigates to login

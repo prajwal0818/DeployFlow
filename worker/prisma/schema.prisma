@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("user")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  tasks     Task[]   @relation("AssignedUser")
+
+  @@map("users")
+}
+
+model Task {
+  id               String    @id @default(uuid())
+  system           String
+  taskName         String    @map("task_name")
+  description      String?
+  assignedTeam     String?   @map("assigned_team")
+  assignedUserId   String?   @map("assigned_user_id")
+  assignedUser     User?     @relation("AssignedUser", fields: [assignedUserId], references: [id])
+  plannedStartTime DateTime? @map("planned_start_time")
+  plannedEndTime   DateTime? @map("planned_end_time")
+  actualStartTime  DateTime? @map("actual_start_time")
+  actualEndTime    DateTime? @map("actual_end_time")
+  status           String    @default("Pending")
+  notes            String?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  dependsOn   TaskDependency[] @relation("TaskDependsOn")
+  dependedBy  TaskDependency[] @relation("TaskDependedBy")
+  auditLogs   AuditLog[]
+
+  @@map("tasks")
+}
+
+model TaskDependency {
+  id              String @id @default(uuid())
+  taskId          String @map("task_id")
+  dependsOnTaskId String @map("depends_on_task_id")
+
+  task      Task @relation("TaskDependsOn", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task @relation("TaskDependedBy", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@map("task_dependencies")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  taskId    String   @map("task_id")
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  action    String
+  field     String?
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  userId    String?  @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
