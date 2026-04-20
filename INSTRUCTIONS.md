@@ -78,10 +78,10 @@ Ensure PostgreSQL is running, then:
 ```bash
 cd backend
 
-# Run migrations (creates tables)
+# Run migrations (creates tables including projects)
 npx prisma migrate dev
 
-# Optional: seed sample data (3 tasks with dependencies)
+# Optional: seed sample data (2 projects with 5 tasks and dependencies)
 npm run db:seed
 
 # Optional: regenerate Prisma client after schema changes
@@ -162,7 +162,8 @@ docker compose logs -f frontend
 ### 4. Seed Database (Optional)
 
 ```bash
-docker compose exec api npx prisma db seed
+docker compose exec api node prisma/seed.js
+# Creates 2 projects (Q3-PROD, PLAT-MIG) with 5 tasks and dependencies
 ```
 
 ### Docker Service Details
@@ -253,7 +254,7 @@ npx prisma studio
 # Regenerate client after schema changes
 npx prisma generate
 
-# Seed sample data
+# Seed sample data (2 projects, 5 tasks)
 npm run db:seed
 ```
 
@@ -266,9 +267,17 @@ The schema includes `binaryTargets = ["native", "linux-musl-openssl-3.0.x"]` for
 ### Models
 
 - **User** — Authentication accounts (email, password, name, role)
-- **Task** — Deployment tasks with status lifecycle
-- **TaskDependency** — Many-to-many dependency relationships between tasks
+- **Project** — Deployment projects (name, code, description); tasks are scoped to projects
+- **Task** — Deployment tasks with status lifecycle, projectId, and per-project sequenceNumber
+- **TaskDependency** — Many-to-many dependency relationships between tasks (same project only)
 - **AuditLog** — Immutable log of all task changes
+
+### Migrations
+
+| Migration                             | Description                                      |
+|---------------------------------------|--------------------------------------------------|
+| `20260416110859_init`                 | Initial schema: User, Task, TaskDependency, AuditLog |
+| `20260417120000_add_project_support`  | Add Project model, projectId + sequenceNumber to Task |
 
 ---
 
@@ -317,7 +326,7 @@ Triggered task emails include:
 1. **Register:** `POST /api/auth/register` with `{ email, password, name }`
 2. **Login:** `POST /api/auth/login` with `{ email, password }`
 3. Both return `{ token, user }` — store the token
-4. Include `Authorization: Bearer <token>` on all `/api/tasks/*` requests
+4. Include `Authorization: Bearer <token>` on all `/api/tasks/*` and `/api/projects/*` requests
 5. Tokens expire after 24 hours
 
 ### Frontend Auth
@@ -372,21 +381,40 @@ Returns: `{ lastRunAt, lastRunDurationMs, tasksEnqueued, tasksBlocked, tasksUnbl
 ### Routing
 
 The frontend uses **HashRouter** for compatibility with reverse proxies and VS Code port forwarding. URLs use hash fragments:
-- `http://localhost:3004/#/` — Dashboard
+- `http://localhost:3004/#/` — Landing page
+- `http://localhost:3004/#/dashboard` — Dashboard
+- `http://localhost:3004/#/projects` — Projects
 - `http://localhost:3004/#/tasks` — Task Grid
 - `http://localhost:3004/#/login` — Login
+- `http://localhost:3004/#/signup` — Sign Up
+- `http://localhost:3004/#/profile` — Profile
 
 ### Pages
 
-- **Dashboard** (`/`) — Overview cards showing task counts by status (Pending, Triggered, Acknowledged, Completed, Blocked) and a recent tasks table
-- **Tasks** (`/tasks`) — AG Grid Excel-like editor with Add Task, Delete Selected, and inline cell editing
-- **Login** (`/login`) — Email/password login form
+- **Landing** (`/`) — Public marketing page with hero section, features, and CTA buttons
+- **Login** (`/login`) — Email/password login form with link to Sign Up
+- **Sign Up** (`/signup`) — Registration form with link to Login
+- **Dashboard** (`/dashboard`) — Overview cards showing task counts by status and a recent tasks table, scoped to selected project
+- **Projects** (`/projects`) — Project list with create form; click a project to select it as active
+- **Tasks** (`/tasks`) — AG Grid Excel-like editor with Add Task, Delete Selected, and inline cell editing, scoped to selected project
+- **Profile** (`/profile`) — User account info (name, email, role, user ID)
 - **Acknowledge** (`/acknowledge`) — Public page for email acknowledgement links
 
 ### Layout
 
-- **Sidebar** — Dark navigation panel with Dashboard and Tasks links, plus Logout button
-- **Header** — Shows current page title and logged-in user email
+- **Sidebar** — Dark navigation panel with Dashboard, Projects, Tasks, Profile links, plus Logout button
+- **Header** — Shows current page title, project selector dropdown, and logged-in user email (links to profile)
+- **Project Selector** — Dropdown in header to switch active project; persisted in localStorage
+
+### Global Project State
+
+The `ProjectContext` in `App.jsx` provides:
+- `projects` — Full list of projects (fetched on app load)
+- `selectedProjectId` — Currently active project (persisted in localStorage)
+- `setSelectedProjectId` — Function to change active project
+- `refreshProjects` — Function to create a project and refresh the list
+
+Dashboard and Task Grid are both scoped to the selected project. Switching projects refetches task data automatically.
 
 ### Environment
 
@@ -409,6 +437,7 @@ The `./api` relative path ensures API calls work through any proxy (VS Code port
 
 The frontend uses AG Grid Community (free). No license key is needed. The grid supports:
 - Inline cell editing (double-click or start typing)
+- Pinned ID column showing Display ID (e.g. `Q3-PROD-1`) — read-only
 - Status dropdown with color-coded badges
 - Multi-select dependency picker with search
 - Date/time pickers for planned start/end
@@ -418,6 +447,8 @@ The frontend uses AG Grid Community (free). No license key is needed. The grid s
 
 - **Completed tasks** cannot be edited (enforced in UI and backend)
 - **actualStartTime / actualEndTime** are read-only (set by system)
+- **ID column** and **sequenceNumber** are read-only (auto-generated)
+- **projectId** cannot be changed after creation
 - Changes are debounced per-row (400ms) before sending to the API
 - On update failure, the grid refetches all tasks to resync
 
@@ -452,9 +483,20 @@ The frontend uses AG Grid Community (free). No license key is needed. The grid s
 - All dependencies must be `Completed`
 - Check scheduler status: `curl http://localhost:3003/api/scheduler/status`
 
+**"Cross-project dependencies are not allowed"**
+- Dependencies can only be set between tasks in the same project
+- Move both tasks to the same project or remove the cross-project dependency
+
+**"Cannot change projectId after task creation"**
+- Tasks are permanently bound to their project once created
+- Delete the task and recreate it in the correct project
+
 **"Circular dependency detected"**
 - You're trying to create a dependency cycle (A depends on B depends on A)
 - Remove the conflicting dependency before adding the new one
+
+**"Project code already exists"**
+- Project codes must be unique — use a different code
 
 **Docker build fails**
 - Ensure `.dockerignore` is present (prevents copying `node_modules`)

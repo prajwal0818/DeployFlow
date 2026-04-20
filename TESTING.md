@@ -4,13 +4,15 @@
 
 1. [Prerequisites](#prerequisites)
 2. [API Testing](#api-testing)
-3. [Task Lifecycle Testing](#task-lifecycle-testing)
-4. [Dependency Engine Testing](#dependency-engine-testing)
-5. [Scheduler Testing](#scheduler-testing)
-6. [Email & Acknowledgement Testing](#email--acknowledgement-testing)
-7. [Frontend Testing](#frontend-testing)
-8. [Security Testing](#security-testing)
-9. [Docker Testing](#docker-testing)
+3. [Project Management Testing](#project-management-testing)
+4. [Task Lifecycle Testing](#task-lifecycle-testing)
+5. [Dependency Engine Testing](#dependency-engine-testing)
+6. [Cross-Project Dependency Testing](#cross-project-dependency-testing)
+7. [Scheduler Testing](#scheduler-testing)
+8. [Email & Acknowledgement Testing](#email--acknowledgement-testing)
+9. [Frontend Testing](#frontend-testing)
+10. [Security Testing](#security-testing)
+11. [Docker Testing](#docker-testing)
 
 ---
 
@@ -71,29 +73,44 @@ curl $API/health
 # Expected: {"status":"ok"}
 ```
 
+### Create a Project
+
+```bash
+PROJECT=$(curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" \
+  -H "$AUTH" \
+  -d '{"name":"Q4 Release","code":"Q4-REL","description":"Q4 production release"}')
+
+PROJECT_ID=$(echo $PROJECT | jq -r '.id')
+echo "Project ID: $PROJECT_ID"
+echo $PROJECT | jq
+```
+
 ### Create a Task
 
 ```bash
 curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" \
   -H "$AUTH" \
-  -d '{
-    "system": "FOL",
-    "taskName": "Pre-deploy DB backup",
-    "description": "Full database snapshot",
-    "assignedTeam": "DBA",
-    "plannedStartTime": "2025-01-01T10:00:00Z"
-  }' | jq
+  -d "{
+    \"system\": \"FOL\",
+    \"taskName\": \"Pre-deploy DB backup\",
+    \"description\": \"Full database snapshot\",
+    \"assignedTeam\": \"DBA\",
+    \"projectId\": \"$PROJECT_ID\",
+    \"plannedStartTime\": \"2025-01-01T10:00:00Z\"
+  }" | jq
+# Expected: task with sequenceNumber=1, project object included
 ```
 
 ### List Tasks
 
 ```bash
-# All tasks
-curl -s $API/api/tasks -H "$AUTH" | jq
+# All tasks for a project
+curl -s "$API/api/tasks?projectId=$PROJECT_ID" -H "$AUTH" | jq
 
-# Filter by status
-curl -s "$API/api/tasks?status=Pending" -H "$AUTH" | jq
+# Filter by status within a project
+curl -s "$API/api/tasks?projectId=$PROJECT_ID&status=Pending" -H "$AUTH" | jq
 
 # Filter by system
 curl -s "$API/api/tasks?system=FOL" -H "$AUTH" | jq
@@ -120,6 +137,13 @@ curl -s -X DELETE "$API/api/tasks/$TASK_ID" -H "$AUTH" -w "%{http_code}"
 ### Verify Validation
 
 ```bash
+# Missing projectId (should fail with 400)
+curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" \
+  -H "$AUTH" \
+  -d '{"system":"FOL","taskName":"No project"}' | jq
+# Expected: 400 "projectId is required"
+
 # Missing required field (should fail with 400)
 curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" \
@@ -131,6 +155,84 @@ curl -s -X PUT "$API/api/tasks/$TASK_ID" \
   -H "Content-Type: application/json" \
   -H "$AUTH" \
   -d '{"status": "InvalidStatus"}' | jq
+
+# Attempt to change projectId (should fail with 400)
+curl -s -X PUT "$API/api/tasks/$TASK_ID" \
+  -H "Content-Type: application/json" \
+  -H "$AUTH" \
+  -d "{\"projectId\": \"$(uuidgen)\"}" | jq
+# Expected: 400 "Cannot change projectId after task creation"
+```
+
+---
+
+## Project Management Testing
+
+### Create Multiple Projects
+
+```bash
+# Create project A
+PROJ_A=$(curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d '{"name":"Alpha Release","code":"ALPHA","description":"Alpha deployment"}' | jq -r '.id')
+
+# Create project B
+PROJ_B=$(curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d '{"name":"Beta Release","code":"BETA","description":"Beta deployment"}' | jq -r '.id')
+
+echo "Project A: $PROJ_A"
+echo "Project B: $PROJ_B"
+```
+
+### Verify Duplicate Code Rejection
+
+```bash
+curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d '{"name":"Another Alpha","code":"ALPHA"}' | jq
+# Expected: 409 "Project code already exists"
+```
+
+### List Projects
+
+```bash
+curl -s $API/api/projects -H "$AUTH" | jq
+```
+
+### Verify Per-Project Sequence Numbers
+
+```bash
+# Create tasks in project A
+TASK_A1=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task A1\",\"projectId\":\"$PROJ_A\"}" | jq -r '.sequenceNumber')
+
+TASK_A2=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task A2\",\"projectId\":\"$PROJ_A\"}" | jq -r '.sequenceNumber')
+
+# Create tasks in project B
+TASK_B1=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task B1\",\"projectId\":\"$PROJ_B\"}" | jq -r '.sequenceNumber')
+
+echo "A1 seq: $TASK_A1, A2 seq: $TASK_A2, B1 seq: $TASK_B1"
+# Expected: A1=1, A2=2, B1=1 (sequence numbers reset per project)
+```
+
+### Verify Same Task Names Across Projects
+
+```bash
+# Same task name in both projects — should succeed
+curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"DB Backup\",\"projectId\":\"$PROJ_A\"}" | jq '.sequenceNumber'
+
+curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"DB Backup\",\"projectId\":\"$PROJ_B\"}" | jq '.sequenceNumber'
+# Expected: both succeed with different sequence numbers
 ```
 
 ---
@@ -145,11 +247,12 @@ Test the full status flow: `Pending → Triggered → Acknowledged → Completed
 TASK=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" \
   -H "$AUTH" \
-  -d '{
-    "system": "FOL",
-    "taskName": "Lifecycle test task",
-    "plannedStartTime": "2024-01-01T00:00:00Z"
-  }')
+  -d "{
+    \"system\": \"FOL\",
+    \"taskName\": \"Lifecycle test task\",
+    \"projectId\": \"$PROJECT_ID\",
+    \"plannedStartTime\": \"2024-01-01T00:00:00Z\"
+  }")
 
 TASK_ID=$(echo $TASK | jq -r '.id')
 echo "Task ID: $TASK_ID"
@@ -217,20 +320,20 @@ curl -s -X PUT "$API/api/tasks/$TASK_ID" \
 
 ## Dependency Engine Testing
 
-### Setup: Create Three Tasks
+### Setup: Create Three Tasks in Same Project
 
 ```bash
 TASK_A=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{"system":"FOL","taskName":"Task A - DB Backup"}' | jq -r '.id')
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task A - DB Backup\",\"projectId\":\"$PROJECT_ID\"}" | jq -r '.id')
 
 TASK_B=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{"system":"SAP GW","taskName":"Task B - Deploy Service"}' | jq -r '.id')
+  -d "{\"system\":\"SAP GW\",\"taskName\":\"Task B - Deploy Service\",\"projectId\":\"$PROJECT_ID\"}" | jq -r '.id')
 
 TASK_C=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{"system":"Fiserv","taskName":"Task C - Smoke Test"}' | jq -r '.id')
+  -d "{\"system\":\"Fiserv\",\"taskName\":\"Task C - Smoke Test\",\"projectId\":\"$PROJECT_ID\"}" | jq -r '.id')
 
 echo "A=$TASK_A  B=$TASK_B  C=$TASK_C"
 ```
@@ -298,6 +401,59 @@ curl -s "$API/api/tasks/$TASK_C" -H "$AUTH" | jq '.status'
 
 ---
 
+## Cross-Project Dependency Testing
+
+### Setup: Create Tasks in Two Different Projects
+
+```bash
+# Create two projects
+PROJ_X=$(curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d '{"name":"Project X","code":"PROJ-X"}' | jq -r '.id')
+
+PROJ_Y=$(curl -s -X POST $API/api/projects \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d '{"name":"Project Y","code":"PROJ-Y"}' | jq -r '.id')
+
+# Create a task in each project
+TASK_X=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task in X\",\"projectId\":\"$PROJ_X\"}" | jq -r '.id')
+
+TASK_Y=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task in Y\",\"projectId\":\"$PROJ_Y\"}" | jq -r '.id')
+
+echo "Task X: $TASK_X  Task Y: $TASK_Y"
+```
+
+### Test: Cross-Project Dependency Must Fail
+
+```bash
+# Try to make Task Y depend on Task X (different projects)
+curl -s -X PUT "$API/api/tasks/$TASK_Y" \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"dependencies\": [\"$TASK_X\"]}" | jq
+# Expected: 400 "Cross-project dependencies are not allowed"
+```
+
+### Test: Same-Project Dependency Should Succeed
+
+```bash
+# Create another task in project X
+TASK_X2=$(curl -s -X POST $API/api/tasks \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"system\":\"FOL\",\"taskName\":\"Task X2\",\"projectId\":\"$PROJ_X\"}" | jq -r '.id')
+
+# Make Task X2 depend on Task X (same project) — should work
+curl -s -X PUT "$API/api/tasks/$TASK_X2" \
+  -H "Content-Type: application/json" -H "$AUTH" \
+  -d "{\"dependencies\": [\"$TASK_X\"]}" | jq '.dependencies'
+# Expected: array with Task X UUID
+```
+
+---
+
 ## Scheduler Testing
 
 ### Check Scheduler Status
@@ -323,11 +479,12 @@ curl -s -X POST $API/api/scheduler/trigger | jq
 # Create task with past start time
 SCHED_TASK=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{
-    "system": "FOL",
-    "taskName": "Scheduler test",
-    "plannedStartTime": "2024-01-01T00:00:00Z"
-  }' | jq -r '.id')
+  -d "{
+    \"system\": \"FOL\",
+    \"taskName\": \"Scheduler test\",
+    \"projectId\": \"$PROJECT_ID\",
+    \"plannedStartTime\": \"2024-01-01T00:00:00Z\"
+  }" | jq -r '.id')
 
 # Trigger scheduler
 curl -s -X POST $API/api/scheduler/trigger | jq
@@ -346,11 +503,12 @@ curl -s "$API/api/tasks/$SCHED_TASK" -H "$AUTH" | jq '.status'
 # Create task with future start time
 FUTURE_TASK=$(curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{
-    "system": "FOL",
-    "taskName": "Future task",
-    "plannedStartTime": "2099-12-31T23:59:59Z"
-  }' | jq -r '.id')
+  -d "{
+    \"system\": \"FOL\",
+    \"taskName\": \"Future task\",
+    \"projectId\": \"$PROJECT_ID\",
+    \"plannedStartTime\": \"2099-12-31T23:59:59Z\"
+  }" | jq -r '.id')
 
 curl -s -X POST $API/api/scheduler/trigger | jq
 sleep 2
@@ -429,35 +587,58 @@ done
 ### Login Flow
 
 1. Navigate to http://localhost:3004 (Docker) or http://localhost:3000 (local)
-2. Should redirect to `/#/login`
-3. Enter credentials and submit
-4. Should redirect to `/#/` (dashboard)
-5. Refresh the page — should stay on dashboard (token persisted)
+2. Landing page displays with "Get Started" and "Login" buttons
+3. Click "Get Started" → navigates to `/#/signup`
+4. Register a new account → redirects to `/#/dashboard`
+5. Or click "Login" → `/#/login` → enter credentials → redirects to `/#/dashboard`
+6. Refresh the page — should stay on dashboard (token persisted)
+
+### Project Management
+
+1. Click **Projects** in the sidebar → navigates to `/#/projects`
+2. The page shows a list of all projects (or empty state if none)
+3. Click **+ New Project** → inline form appears
+4. Fill in Name (e.g. "Q4 Release"), Code (e.g. "Q4-REL", auto-uppercased), optional Description
+5. Click **Create Project** → project appears in the list and is auto-selected as active
+6. Click any project row to make it the active project
+7. The active project shows a blue left border and "Active" badge
+8. Verify the **Header dropdown** updates to show the newly selected project
+
+### Project Switching
+
+1. Use the **project selector dropdown** in the Header to switch projects
+2. Navigate to Dashboard — task counts should change based on the selected project
+3. Navigate to Tasks — grid should show only tasks for the selected project
+4. Create a task in project A, switch to project B — the task should not appear
 
 ### Dashboard
 
-1. After login, the dashboard displays:
+1. After login, click **Dashboard** in sidebar
+2. If a project is selected, displays:
    - **Status cards** — Pending, Triggered, Acknowledged, Completed, Blocked counts
-   - **Recent tasks table** — Last 8 tasks sorted by update time
-2. Click any status card to navigate to the Tasks page
-3. Verify counts match the actual task data
+   - **Recent tasks table** — Last 8 tasks sorted by update time, with Display ID column (e.g. Q3-PROD-1)
+3. If no project is selected, shows "Select a project to view the dashboard"
+4. Click any status card to navigate to the Tasks page
+5. Verify counts match the actual task data for the selected project
 
 ### Navigation
 
-1. **Sidebar** — Dark panel on the left with Dashboard and Tasks links
-2. Click "Tasks" — navigates to `/#/tasks` (AG Grid editor)
-3. Click "Dashboard" — navigates to `/#/` (overview)
-4. **Header** — Shows page title and logged-in user email
+1. **Sidebar** — Dark panel on the left with Dashboard, Projects, Tasks, Profile links
+2. Click each link — navigates correctly with active state highlighting
+3. **Header** — Shows page title, project selector dropdown, and logged-in user email
+4. Click **user email** in header → navigates to `/#/profile`
 5. **Logout** — Click logout button in sidebar, should clear token and redirect to login
 
 ### Grid Operations
 
 **Add Task:**
 1. Navigate to Tasks (`/#/tasks`)
-2. Click the "+ Add Task" button
-3. A new row appears at the bottom
-4. Fill in system and task name (required)
-5. Row is saved automatically via debounced API call
+2. If no project selected, shows "Select a project to view tasks"
+3. With a project selected, click the **+ Add Task** button
+4. A new row appears at the bottom with the project's next sequence number
+5. The **ID column** (pinned left) shows `PROJECT-CODE-N` (e.g. `Q3-PROD-4`)
+6. Fill in system and task name (required)
+7. Row is saved automatically via debounced API call
 
 **Edit Task:**
 1. Double-click any editable cell
@@ -473,7 +654,7 @@ done
 **Dependency Picker:**
 1. Click a dependencies cell
 2. A popup appears with searchable checkboxes
-3. Select one or more tasks
+3. Select one or more tasks (only tasks from the same project appear)
 4. Close the popup — dependencies are saved
 
 **Date/Time Picker:**
@@ -486,6 +667,21 @@ done
 1. Select one or more rows (click row checkbox)
 2. Click the "Delete Selected" button
 3. Confirm the deletion
+
+### Sign Up Page
+
+1. Navigate to `/#/login`
+2. Click "Don't have an account? Sign Up" → navigates to `/#/signup`
+3. Fill in Name, Email, Password (min 8 chars), Confirm Password
+4. If passwords don't match, client-side error shows
+5. Click "Sign Up" → registers and redirects to `/#/dashboard`
+6. "Already have an account? Sign In" link navigates back to login
+
+### Profile Page
+
+1. Click **Profile** in sidebar or click user email in header
+2. Shows avatar with initials, Name, Email, Role, User ID
+3. Password section shows "Coming Soon" badge
 
 ### Acknowledge Page
 
@@ -521,13 +717,13 @@ curl -s $API/api/tasks -H "$AUTH" | jq
 # SQL injection attempt in task name
 curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{"system":"FOL","taskName":"Robert; DROP TABLE tasks;--"}' | jq
+  -d "{\"system\":\"FOL\",\"taskName\":\"Robert; DROP TABLE tasks;--\",\"projectId\":\"$PROJECT_ID\"}" | jq
 # Expected: 201 (Prisma parameterizes queries — no SQL injection)
 
 # XSS attempt
 curl -s -X POST $API/api/tasks \
   -H "Content-Type: application/json" -H "$AUTH" \
-  -d '{"system":"FOL","taskName":"<script>alert(1)</script>"}' | jq
+  -d "{\"system\":\"FOL\",\"taskName\":\"<script>alert(1)</script>\",\"projectId\":\"$PROJECT_ID\"}" | jq
 # Expected: 201 (stored as-is, but React escapes output by default)
 ```
 
@@ -593,6 +789,13 @@ curl -s http://localhost:3004/api/auth/login \
 # Expected: JWT token response
 ```
 
+### Seed Database in Docker
+
+```bash
+docker compose exec api node prisma/seed.js
+# Expected: "Seeded 2 projects with 5 tasks and dependencies"
+```
+
 ### Test Database Migrations
 
 ```bash
@@ -620,7 +823,7 @@ docker compose logs -f worker &
 docker compose restart api worker
 
 # Tasks should still be there after restart
-curl -s http://localhost:3003/api/tasks -H "$AUTH" | jq length
+curl -s "http://localhost:3003/api/tasks?projectId=$PROJECT_ID" -H "$AUTH" | jq length
 ```
 
 ### Cleanup
