@@ -13,6 +13,9 @@ const TASK_INCLUDE = {
   assignedUser: {
     select: { id: true, name: true, email: true },
   },
+  project: {
+    select: { id: true, code: true, name: true },
+  },
 };
 
 function formatTask(task) {
@@ -39,11 +42,14 @@ async function list(filters = {}) {
   if (filters.assignedUserId) {
     where.assignedUserId = filters.assignedUserId;
   }
+  if (filters.projectId) {
+    where.projectId = filters.projectId;
+  }
 
   const tasks = await prisma.task.findMany({
     where,
     include: TASK_INCLUDE,
-    orderBy: { createdAt: "asc" },
+    orderBy: { sequenceNumber: "asc" },
   });
 
   return tasks.map(formatTask);
@@ -69,9 +75,34 @@ async function getById(id) {
 async function create(data) {
   const { dependencies, ...taskData } = data;
 
-  const task = await prisma.task.create({
-    data: taskData,
-    include: TASK_INCLUDE,
+  if (!taskData.projectId) {
+    throw new AppError("projectId is required", 400);
+  }
+
+  // Verify project exists
+  const project = await prisma.project.findUnique({
+    where: { id: taskData.projectId },
+  });
+  if (!project) {
+    throw new AppError("Project not found", 404);
+  }
+
+  // Generate sequenceNumber atomically within a transaction
+  const task = await prisma.$transaction(async (tx) => {
+    const lastTask = await tx.task.findFirst({
+      where: { projectId: taskData.projectId },
+      orderBy: { sequenceNumber: "desc" },
+    });
+
+    const nextSeq = (lastTask?.sequenceNumber || 0) + 1;
+
+    return tx.task.create({
+      data: {
+        ...taskData,
+        sequenceNumber: nextSeq,
+      },
+      include: TASK_INCLUDE,
+    });
   });
 
   await writeAuditLog(task.id, "CREATED", null, null, null);
@@ -108,6 +139,13 @@ async function update(id, data, opts = {}) {
   }
 
   const { dependencies, ...taskFields } = data;
+
+  // Prevent changing projectId after creation
+  if (taskFields.projectId && taskFields.projectId !== existing.projectId) {
+    throw new AppError("Cannot change projectId after task creation", 400);
+  }
+  // Remove projectId from update payload to be safe
+  delete taskFields.projectId;
 
   // Validate status transition
   if (taskFields.status && taskFields.status !== existing.status) {

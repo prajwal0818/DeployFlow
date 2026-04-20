@@ -7,17 +7,33 @@ const { AppError } = require("../utils/errors");
 // API middleware, service layer, scheduler, and worker.
 
 async function canTaskExecute(taskId) {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { id: true, projectId: true },
+  });
+
+  if (!task) {
+    throw new AppError("Task not found", 404);
+  }
+
   const dependencies = await prisma.taskDependency.findMany({
     where: { taskId },
     include: {
       dependsOn: {
-        select: { id: true, taskName: true, status: true },
+        select: { id: true, taskName: true, status: true, projectId: true },
       },
     },
   });
 
   if (dependencies.length === 0) {
     return { executable: true, blockingTasks: [] };
+  }
+
+  // Validate all dependencies are within the same project
+  for (const dep of dependencies) {
+    if (dep.dependsOn.projectId !== task.projectId) {
+      throw new AppError("Cross-project dependencies are not allowed", 400);
+    }
   }
 
   const blockingTasks = dependencies
@@ -39,9 +55,40 @@ async function canTaskExecute(taskId) {
 // worker code where you want a hard failure.
 
 async function assertDependenciesMet(taskId) {
-  const result = await canTaskExecute(taskId);
-  if (!result.executable) {
-    const names = result.blockingTasks
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { id: true, projectId: true },
+  });
+
+  if (!task) {
+    throw new AppError("Task not found", 404);
+  }
+
+  const dependencies = await prisma.taskDependency.findMany({
+    where: { taskId },
+    include: {
+      dependsOn: {
+        select: { id: true, taskName: true, status: true, projectId: true },
+      },
+    },
+  });
+
+  // Validate all dependencies are within the same project
+  for (const dep of dependencies) {
+    if (dep.dependsOn.projectId !== task.projectId) {
+      throw new AppError("Cross-project dependencies are not allowed", 400);
+    }
+  }
+
+  const blockingTasks = dependencies
+    .filter((dep) => dep.dependsOn.status !== "Completed")
+    .map((dep) => ({
+      taskName: dep.dependsOn.taskName,
+      status: dep.dependsOn.status,
+    }));
+
+  if (blockingTasks.length > 0) {
+    const names = blockingTasks
       .map((t) => `${t.taskName} (${t.status})`)
       .join(", ");
     throw new AppError(
@@ -120,7 +167,7 @@ async function validateDependenciesExist(dependencyIds) {
 
 // ── setDependencies ─────────────────────────────────────────────────────────
 // Replace all dependencies for a task with a new set.
-// Validates: existence, self-reference, circular reference.
+// Validates: existence, self-reference, circular reference, same project.
 
 async function setDependencies(taskId, dependencyIds) {
   const unique = [...new Set(dependencyIds)];
@@ -132,6 +179,27 @@ async function setDependencies(taskId, dependencyIds) {
 
   if (unique.length > 0) {
     await validateDependenciesExist(unique);
+
+    // Cross-project check: all deps must be in the same project as the task
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true },
+    });
+
+    if (!task) {
+      throw new AppError("Task not found", 404);
+    }
+
+    const depTasks = await prisma.task.findMany({
+      where: { id: { in: unique } },
+      select: { id: true, projectId: true },
+    });
+
+    for (const dep of depTasks) {
+      if (dep.projectId !== task.projectId) {
+        throw new AppError("Cross-project dependencies are not allowed", 400);
+      }
+    }
 
     if (await wouldCreateCycle(taskId, unique)) {
       throw new AppError("Circular dependency detected", 400);

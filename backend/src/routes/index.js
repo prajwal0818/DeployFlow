@@ -2,12 +2,14 @@ const { Router } = require("express");
 const taskRoutes = require("./taskRoutes");
 const authRoutes = require("./authRoutes");
 const acknowledgeRoutes = require("./acknowledgeRoutes");
+const projectRoutes = require("./projectRoutes");
 const scheduler = require("../services/schedulerService");
 
 const router = Router();
 
 router.use("/auth", authRoutes);
 router.use("/tasks", taskRoutes);
+router.use("/projects", projectRoutes);
 router.use("/acknowledge", acknowledgeRoutes);
 
 router.get("/scheduler/status", (_req, res) => {

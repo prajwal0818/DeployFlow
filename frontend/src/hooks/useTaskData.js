@@ -1,23 +1,28 @@
 import { useState, useEffect, useCallback } from "react";
 import { taskService } from "../services/taskService";
 
-export function useTaskData() {
+export function useTaskData(projectId) {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const fetchTasks = useCallback(async () => {
+    if (!projectId) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
-      const res = await taskService.list();
+      const res = await taskService.list(projectId);
       setTasks(res.data);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     fetchTasks();

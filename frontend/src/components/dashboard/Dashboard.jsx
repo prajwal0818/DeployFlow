@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useContext } from "react";
 import { useTaskData } from "../../hooks/useTaskData";
 import { useNavigate } from "react-router-dom";
+import { ProjectContext } from "../../App";
 
 const statusColors = {
   Pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
@@ -23,8 +24,17 @@ function StatCard({ label, count, colorClass, onClick }) {
 }
 
 export default function Dashboard() {
-  const { tasks, loading, error, fetchTasks } = useTaskData();
+  const { selectedProjectId } = useContext(ProjectContext);
+  const { tasks, loading, error, fetchTasks } = useTaskData(selectedProjectId);
   const navigate = useNavigate();
+
+  if (!selectedProjectId) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        Select a project to view the dashboard.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -90,6 +100,7 @@ export default function Dashboard() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b">
               <tr>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">ID</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Task</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">System</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Team</th>
@@ -100,6 +111,9 @@ export default function Dashboard() {
             <tbody className="divide-y">
               {recentTasks.map((task) => (
                 <tr key={task.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-gray-600 font-mono text-xs">
+                    {task.project?.code}-{task.sequenceNumber}
+                  </td>
                   <td className="px-4 py-3 font-medium text-gray-800">{task.taskName}</td>
                   <td className="px-4 py-3 text-gray-600">{task.system}</td>
                   <td className="px-4 py-3 text-gray-600">{task.assignedTeam || "-"}</td>
@@ -117,7 +131,7 @@ export default function Dashboard() {
               ))}
               {recentTasks.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                     No tasks yet. Go to Tasks to create one.
                   </td>
                 </tr>

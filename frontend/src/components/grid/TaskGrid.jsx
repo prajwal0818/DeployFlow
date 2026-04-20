@@ -1,14 +1,16 @@
-import React, { useCallback, useRef, useMemo } from "react";
+import React, { useCallback, useRef, useMemo, useContext } from "react";
 import { AgGridReact } from "ag-grid-react";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { columnDefs } from "./columnDefs";
 import { useTaskData } from "../../hooks/useTaskData";
+import { ProjectContext } from "../../App";
 
 export default function TaskGrid() {
   const gridRef = useRef(null);
+  const { selectedProjectId } = useContext(ProjectContext);
   const { tasks, loading, error, addTask, updateTask, deleteTask, fetchTasks } =
-    useTaskData();
+    useTaskData(selectedProjectId);
 
   // ── Per-row debounced updates ──────────────────────────────────────────────
   const pendingUpdates = useRef({});
@@ -56,8 +58,16 @@ export default function TaskGrid() {
 
   // ── Add Task ───────────────────────────────────────────────────────────────
   const handleAddTask = useCallback(async () => {
+    if (!selectedProjectId) {
+      alert("Please select a project first.");
+      return;
+    }
     try {
-      const created = await addTask({ system: "FOL", taskName: "New Task" });
+      const created = await addTask({
+        system: "FOL",
+        taskName: "New Task",
+        projectId: selectedProjectId,
+      });
       // Scroll to new row and start editing
       setTimeout(() => {
         const api = gridRef.current?.api;
@@ -74,7 +84,7 @@ export default function TaskGrid() {
     } catch (err) {
       alert(`Failed to add task: ${err.response?.data?.error || err.message}`);
     }
-  }, [addTask]);
+  }, [addTask, selectedProjectId]);
 
   // ── Delete Selected ────────────────────────────────────────────────────────
   const handleDeleteSelected = useCallback(async () => {
@@ -110,6 +120,15 @@ export default function TaskGrid() {
   const getRowId = useCallback((params) => params.data.id, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (!selectedProjectId) {
+    return (
+      <div className="flex items-center justify-center h-full text-gray-500">
+        Select a project to view tasks.
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-500">

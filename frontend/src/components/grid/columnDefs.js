@@ -14,7 +14,20 @@ function isEditable(params) {
   return params.data?.status !== "Completed";
 }
 
+function displayIdGetter(params) {
+  const code = params.data?.project?.code || "???";
+  const seq = params.data?.sequenceNumber;
+  return `${code}-${seq}`;
+}
+
 export const columnDefs = [
+  {
+    headerName: "ID",
+    valueGetter: displayIdGetter,
+    width: 120,
+    editable: false,
+    pinned: "left",
+  },
   {
     field: "system",
     headerName: "System",

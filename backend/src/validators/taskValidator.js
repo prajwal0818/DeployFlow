@@ -17,6 +17,7 @@ const createTaskSchema = z.object({
   plannedStartTime: z.coerce.date().optional().nullable(),
   plannedEndTime: z.coerce.date().optional().nullable(),
   notes: z.string().optional(),
+  projectId: z.string().uuid("projectId is required"),
   dependencies: z.array(z.string().uuid()).optional().default([]),
 });
 

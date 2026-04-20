@@ -10,6 +10,7 @@ exports.list = async (req, res, next) => {
       status: req.query.status,
       system: req.query.system,
       assignedUserId: req.query.assignedUserId,
+      projectId: req.query.projectId,
     };
     const tasks = await taskService.list(filters);
     res.json(tasks);
@@ -29,6 +30,9 @@ exports.getById = async (req, res, next) => {
 
 exports.create = async (req, res, next) => {
   try {
+    if (!req.body.projectId) {
+      return res.status(400).json({ error: "projectId is required" });
+    }
     const task = await taskService.create(req.body);
     res.status(201).json(task);
   } catch (err) {
