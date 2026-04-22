@@ -108,8 +108,22 @@ async function wouldCreateCycle(taskId, targetIds) {
   if (targetIds.length === 0) return false;
   if (targetIds.includes(taskId)) return true;
 
-  // Load entire graph once — much faster than per-node queries
+  // Scope graph to the task's project to avoid loading the entire DB
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { projectId: true },
+  });
+
+  const projectTaskIds = await prisma.task.findMany({
+    where: { projectId: task.projectId },
+    select: { id: true },
+  });
+  const projectIds = new Set(projectTaskIds.map((t) => t.id));
+
   const allEdges = await prisma.taskDependency.findMany({
+    where: {
+      taskId: { in: [...projectIds] },
+    },
     select: { taskId: true, dependsOnTaskId: true },
   });
 

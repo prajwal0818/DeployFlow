@@ -1,5 +1,6 @@
 import React, { useContext, useState } from "react";
 import { ProjectContext } from "../../App";
+import { projectService } from "../../services/projectService";
 
 export default function Projects() {
   const { projects, selectedProjectId, setSelectedProjectId, refreshProjects } =
@@ -11,6 +12,24 @@ export default function Projects() {
   const [description, setDescription] = useState("");
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (project, e) => {
+    e.stopPropagation();
+    const msg = `Delete project "${project.code}"? All tasks in this project will be permanently deleted.`;
+    if (!window.confirm(msg)) return;
+
+    setDeleting(project.id);
+    setError(null);
+    try {
+      await projectService.deleteProject(project.id);
+      await refreshProjects();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -48,6 +67,10 @@ export default function Projects() {
           </button>
         )}
       </div>
+
+      {error && !showForm && (
+        <p className="text-sm text-red-600 bg-red-50 p-2 rounded">{error}</p>
+      )}
 
       {/* Create Form */}
       {showForm && (
@@ -151,9 +174,18 @@ export default function Projects() {
                 <p className="text-sm text-gray-500 mt-1">{p.description}</p>
               )}
             </div>
-            {selectedProjectId === p.id && (
-              <span className="text-xs font-medium text-blue-600">Active</span>
-            )}
+            <div className="flex items-center gap-3">
+              {selectedProjectId === p.id && (
+                <span className="text-xs font-medium text-blue-600">Active</span>
+              )}
+              <button
+                onClick={(e) => handleDelete(p, e)}
+                disabled={deleting === p.id}
+                className="px-3 py-1 text-xs font-medium text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50 transition-colors"
+              >
+                {deleting === p.id ? "Deleting..." : "Delete"}
+              </button>
+            </div>
           </div>
         ))}
         {projects.length === 0 && (

@@ -12,7 +12,7 @@ const pageTitles = {
 export default function Header() {
   const location = useLocation();
   const title = pageTitles[location.pathname] || "DeployFlow";
-  const { projects, selectedProjectId, setSelectedProjectId } =
+  const { projects, selectedProjectId, setSelectedProjectId, projectsLoading } =
     useContext(ProjectContext);
 
   const user = React.useMemo(() => {
@@ -33,14 +33,22 @@ export default function Header() {
         <select
           value={selectedProjectId || ""}
           onChange={(e) => setSelectedProjectId(e.target.value || null)}
-          className="text-sm border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={projectsLoading}
+          aria-label="Select project"
+          className="text-sm border border-gray-300 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
         >
-          <option value="" disabled>Select Project</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.code} — {p.name}
-            </option>
-          ))}
+          {projectsLoading ? (
+            <option value="" disabled>Loading projects...</option>
+          ) : (
+            <>
+              <option value="" disabled>Select Project</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.code} — {p.name}
+                </option>
+              ))}
+            </>
+          )}
         </select>
         {user && (
           <Link to="/profile" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">

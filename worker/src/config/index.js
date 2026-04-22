@@ -1,3 +1,21 @@
+const INSECURE_DEFAULTS = [
+  "change-me-in-production",
+  "dev-ack-secret-change-in-production",
+];
+
+const isProduction = process.env.NODE_ENV === "production";
+
+const ackTokenSecret =
+  process.env.ACK_TOKEN_SECRET || "dev-ack-secret-change-in-production";
+
+if (isProduction) {
+  if (!ackTokenSecret || INSECURE_DEFAULTS.includes(ackTokenSecret)) {
+    throw new Error(
+      "FATAL: ACK_TOKEN_SECRET is missing or using an insecure default. Set a strong secret in production."
+    );
+  }
+}
+
 module.exports = {
   redis: {
     host: process.env.REDIS_HOST || "localhost",
@@ -10,8 +28,7 @@ module.exports = {
     pass: process.env.SMTP_PASS,
   },
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
-  ackTokenSecret:
-    process.env.ACK_TOKEN_SECRET || "dev-ack-secret-change-in-production",
+  ackTokenSecret,
   ackTokenExpiryMs:
     parseInt(process.env.ACK_TOKEN_EXPIRY_MS, 10) || 7 * 24 * 60 * 60 * 1000, // 7 days
 };

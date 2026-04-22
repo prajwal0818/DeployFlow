@@ -16,7 +16,9 @@ export function useTaskData(projectId) {
       setLoading(true);
       setError(null);
       const res = await taskService.list(projectId);
-      setTasks(res.data);
+      // API returns { data: [...], total, page, limit }
+      const payload = res.data;
+      setTasks(Array.isArray(payload) ? payload : payload.data || []);
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {

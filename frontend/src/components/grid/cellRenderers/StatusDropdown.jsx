@@ -1,12 +1,7 @@
 import React from "react";
+import { STATUS_BADGE_COLORS } from "../../../utils/constants";
 
-const STATUS_COLORS = {
-  Pending: { bg: "#f3f4f6", text: "#374151" },
-  Triggered: { bg: "#dbeafe", text: "#1d4ed8" },
-  Acknowledged: { bg: "#fef3c7", text: "#92400e" },
-  Completed: { bg: "#d1fae5", text: "#065f46" },
-  Blocked: { bg: "#fee2e2", text: "#991b1b" },
-};
+const STATUS_COLORS = STATUS_BADGE_COLORS;
 
 export default function StatusRenderer(params) {
   const value = params.value;

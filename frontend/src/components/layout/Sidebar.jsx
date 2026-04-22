@@ -49,6 +49,7 @@ export default function Sidebar() {
 
   const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("selectedProjectId");
     navigate("/login");
   };
 
@@ -60,7 +61,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 py-4 px-2 space-y-1">
+      <nav aria-label="Main navigation" className="flex-1 py-4 px-2 space-y-1">
         {navItems.map((item) => (
           <NavLink
             key={item.to}
@@ -74,7 +75,7 @@ export default function Sidebar() {
               }`
             }
           >
-            <item.icon />
+            <item.icon aria-hidden="true" />
             {item.label}
           </NavLink>
         ))}

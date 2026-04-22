@@ -11,9 +11,11 @@ exports.list = async (req, res, next) => {
       system: req.query.system,
       assignedUserId: req.query.assignedUserId,
       projectId: req.query.projectId,
+      page: req.query.page,
+      limit: req.query.limit,
     };
-    const tasks = await taskService.list(filters);
-    res.json(tasks);
+    const result = await taskService.list(filters);
+    res.json(result);
   } catch (err) {
     next(err);
   }
@@ -33,7 +35,7 @@ exports.create = async (req, res, next) => {
     if (!req.body.projectId) {
       return res.status(400).json({ error: "projectId is required" });
     }
-    const task = await taskService.create(req.body);
+    const task = await taskService.create(req.body, { userId: req.user?.id || null });
     res.status(201).json(task);
   } catch (err) {
     next(err);
@@ -44,7 +46,10 @@ exports.update = async (req, res, next) => {
   try {
     // If the API middleware already validated dependencies, tell the
     // service layer so it can skip the redundant DB query.
-    const opts = { dependencyPreChecked: !!req.dependencyCheck };
+    const opts = {
+      dependencyPreChecked: !!req.dependencyCheck,
+      userId: req.user?.id || null,
+    };
     const task = await taskService.update(req.params.id, req.body, opts);
     res.json(task);
   } catch (err) {

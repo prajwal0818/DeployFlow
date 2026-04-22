@@ -16,9 +16,12 @@ emailWorker.on("completed", (job, result) => {
 });
 
 emailWorker.on("failed", (job, err) => {
+  const maxAttempts = job?.opts?.attempts || 5;
+  const isFinal = job?.attemptsMade >= maxAttempts;
+
   logger.error(
-    { jobId: job?.id, taskId: job?.data?.taskId, err: err.message, attempts: job?.attemptsMade },
-    "Email job failed"
+    { jobId: job?.id, taskId: job?.data?.taskId, err: err.message, attempts: job?.attemptsMade, final: isFinal },
+    isFinal ? "Email job permanently failed — no more retries" : "Email job failed"
   );
 });
 

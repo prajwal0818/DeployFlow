@@ -46,13 +46,22 @@ async function list(filters = {}) {
     where.projectId = filters.projectId;
   }
 
-  const tasks = await prisma.task.findMany({
-    where,
-    include: TASK_INCLUDE,
-    orderBy: { sequenceNumber: "asc" },
-  });
+  const page = Math.max(1, parseInt(filters.page, 10) || 1);
+  const limit = Math.min(500, Math.max(1, parseInt(filters.limit, 10) || 100));
+  const skip = (page - 1) * limit;
 
-  return tasks.map(formatTask);
+  const [tasks, total] = await Promise.all([
+    prisma.task.findMany({
+      where,
+      include: TASK_INCLUDE,
+      orderBy: { sequenceNumber: "asc" },
+      skip,
+      take: limit,
+    }),
+    prisma.task.count({ where }),
+  ]);
+
+  return { data: tasks.map(formatTask), total, page, limit };
 }
 
 // ── Get by ID ───────────────────────────────────────────────────────────────
@@ -72,8 +81,9 @@ async function getById(id) {
 
 // ── Create ──────────────────────────────────────────────────────────────────
 
-async function create(data) {
+async function create(data, opts = {}) {
   const { dependencies, ...taskData } = data;
+  const userId = opts.userId || null;
 
   if (!taskData.projectId) {
     throw new AppError("projectId is required", 400);
@@ -105,7 +115,7 @@ async function create(data) {
     });
   });
 
-  await writeAuditLog(task.id, "CREATED", null, null, null);
+  await writeAuditLog(task.id, "CREATED", null, null, null, userId);
 
   if (dependencies && dependencies.length > 0) {
     await setDependencies(task.id, dependencies);
@@ -114,7 +124,8 @@ async function create(data) {
       "UPDATED",
       "dependencies",
       null,
-      dependencies.join(",")
+      dependencies.join(","),
+      userId
     );
     return getById(task.id);
   }
@@ -162,6 +173,8 @@ async function update(id, data, opts = {}) {
     }
   }
 
+  const userId = opts.userId || null;
+
   // Build audit entries for changed fields
   const auditEntries = [];
   for (const [key, value] of Object.entries(taskFields)) {
@@ -173,6 +186,7 @@ async function update(id, data, opts = {}) {
         field: key,
         oldValue: oldVal == null ? null : String(oldVal),
         newValue: value == null ? null : String(value),
+        userId,
       });
     }
   }
@@ -204,7 +218,8 @@ async function update(id, data, opts = {}) {
         "UPDATED",
         "dependencies",
         oldDeps.join(",") || null,
-        newDeps.join(",") || null
+        newDeps.join(",") || null,
+        userId
       );
     }
   }
@@ -251,9 +266,9 @@ function validateStatusTransition(current, next) {
   }
 }
 
-async function writeAuditLog(taskId, action, field, oldValue, newValue) {
+async function writeAuditLog(taskId, action, field, oldValue, newValue, userId = null) {
   await prisma.auditLog.create({
-    data: { taskId, action, field, oldValue, newValue },
+    data: { taskId, action, field, oldValue, newValue, userId },
   });
 }
 

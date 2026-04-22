@@ -50,16 +50,23 @@ module.exports = async (job) => {
 
   const result = await sendEmail(task);
 
-  // ── 4. Audit ─────────────────────────────────────────────────────────
-  await prisma.auditLog.create({
-    data: {
-      taskId,
-      action: "EMAIL_SENT",
-      field: null,
-      oldValue: null,
-      newValue: `to=${to} messageId=${result.messageId}`,
-    },
-  });
+  // ── 4. Audit (best-effort — don't retry the whole job if only audit fails) ──
+  try {
+    await prisma.auditLog.create({
+      data: {
+        taskId,
+        action: "EMAIL_SENT",
+        field: null,
+        oldValue: null,
+        newValue: `to=${to} messageId=${result.messageId}`,
+      },
+    });
+  } catch (auditErr) {
+    log.error(
+      { err: auditErr.message, messageId: result.messageId },
+      "Email sent but audit log write failed"
+    );
+  }
 
   log.info({ messageId: result.messageId }, "Email sent successfully");
 

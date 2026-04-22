@@ -10,6 +10,8 @@ import TaskGrid from "./components/grid/TaskGrid";
 import Profile from "./components/profile/Profile";
 import Projects from "./components/projects/Projects";
 import AcknowledgePage from "./components/acknowledge/AcknowledgePage";
+import ErrorBoundary from "./components/ui/ErrorBoundary";
+import ToastContainer from "./components/ui/Toast";
 import { projectService } from "./services/projectService";
 
 export const ProjectContext = createContext({
@@ -17,30 +19,39 @@ export const ProjectContext = createContext({
   selectedProjectId: null,
   setSelectedProjectId: () => {},
   refreshProjects: () => {},
+  projectsLoading: false,
 });
 
 function App() {
   const [projects, setProjects] = useState([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
   const [selectedProjectId, setSelectedProjectId] = useState(() => {
     return localStorage.getItem("selectedProjectId") || null;
   });
 
   const fetchProjects = useCallback(() => {
     const token = localStorage.getItem("token");
-    if (!token) return;
+    if (!token) {
+      setProjectsLoading(false);
+      return;
+    }
+    setProjectsLoading(true);
     projectService.getProjects()
       .then((res) => {
-        setProjects(res.data);
+        // API returns { data: [...], total, page, limit } or plain array
+        const list = Array.isArray(res.data) ? res.data : res.data.data || [];
+        setProjects(list);
         // Auto-select first project if none selected or selection is stale
-        if (res.data.length > 0) {
-          const ids = res.data.map((p) => p.id);
+        if (list.length > 0) {
+          const ids = list.map((p) => p.id);
           setSelectedProjectId((prev) => {
             if (prev && ids.includes(prev)) return prev;
-            return res.data[0].id;
+            return list[0].id;
           });
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setProjectsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -63,35 +74,49 @@ function App() {
       const created = res.data;
       // Re-fetch full list to stay in sync
       const listRes = await projectService.getProjects();
-      setProjects(listRes.data);
+      const list = Array.isArray(listRes.data) ? listRes.data : listRes.data.data || [];
+      setProjects(list);
       return created;
     }
-    // Just refresh
+    // Refresh list and fix stale selection (e.g. after delete)
     const listRes = await projectService.getProjects();
-    setProjects(listRes.data);
+    const list = Array.isArray(listRes.data) ? listRes.data : listRes.data.data || [];
+    setProjects(list);
+    if (list.length > 0) {
+      const ids = list.map((p) => p.id);
+      setSelectedProjectId((prev) => {
+        if (prev && ids.includes(prev)) return prev;
+        return list[0].id;
+      });
+    } else {
+      setSelectedProjectId(null);
+    }
   }, []);
 
   return (
-    <ProjectContext.Provider
-      value={{ projects, selectedProjectId, setSelectedProjectId, refreshProjects }}
-    >
-      <HashRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<SignUp />} />
-          <Route path="/acknowledge" element={<AcknowledgePage />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<MainLayout />}>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/tasks" element={<TaskGrid />} />
-              <Route path="/projects" element={<Projects />} />
-              <Route path="/profile" element={<Profile />} />
+    <ErrorBoundary>
+      <ProjectContext.Provider
+        value={{ projects, selectedProjectId, setSelectedProjectId, refreshProjects, projectsLoading }}
+      >
+        <ToastContainer />
+        <HashRouter>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<SignUp />} />
+            <Route path="/acknowledge" element={<AcknowledgePage />} />
+            <Route element={<ProtectedRoute />}>
+              <Route element={<MainLayout />}>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/tasks" element={<TaskGrid />} />
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/profile" element={<Profile />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
-      </HashRouter>
-    </ProjectContext.Provider>
+          </Routes>
+        </HashRouter>
+      </ProjectContext.Provider>
+    </ErrorBoundary>
   );
 }
 

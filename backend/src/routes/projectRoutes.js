@@ -11,5 +11,6 @@ router.use(auth);
 router.get("/", projectController.list);
 router.get("/:id", projectController.getById);
 router.post("/", validate(createProjectSchema), projectController.create);
+router.delete("/:id", projectController.remove);
 
 module.exports = router;

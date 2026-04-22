@@ -2,14 +2,9 @@ import React, { useContext } from "react";
 import { useTaskData } from "../../hooks/useTaskData";
 import { useNavigate } from "react-router-dom";
 import { ProjectContext } from "../../App";
+import { STATUS_CARD_COLORS } from "../../utils/constants";
 
-const statusColors = {
-  Pending: "bg-yellow-100 text-yellow-800 border-yellow-300",
-  Triggered: "bg-blue-100 text-blue-800 border-blue-300",
-  Acknowledged: "bg-purple-100 text-purple-800 border-purple-300",
-  Completed: "bg-green-100 text-green-800 border-green-300",
-  Blocked: "bg-red-100 text-red-800 border-red-300",
-};
+const statusColors = STATUS_CARD_COLORS;
 
 function StatCard({ label, count, colorClass, onClick }) {
   return (

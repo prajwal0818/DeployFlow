@@ -16,9 +16,12 @@ taskWorker.on("completed", (job, result) => {
 });
 
 taskWorker.on("failed", (job, err) => {
+  const maxAttempts = job?.opts?.attempts || 3;
+  const isFinal = job?.attemptsMade >= maxAttempts;
+
   logger.error(
-    { jobId: job?.id, taskId: job?.data?.taskId, err: err.message, attempts: job?.attemptsMade },
-    "Task job failed"
+    { jobId: job?.id, taskId: job?.data?.taskId, err: err.message, attempts: job?.attemptsMade, final: isFinal },
+    isFinal ? "Task job permanently failed — no more retries" : "Task job failed"
   );
 });
 

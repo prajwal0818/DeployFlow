@@ -1,10 +1,11 @@
-import React, { useCallback, useRef, useMemo, useContext } from "react";
+import React, { useCallback, useRef, useMemo, useContext, useEffect } from "react";
 import { AgGridReact } from "ag-grid-react";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { columnDefs } from "./columnDefs";
 import { useTaskData } from "../../hooks/useTaskData";
 import { ProjectContext } from "../../App";
+import { toast } from "../ui/Toast";
 
 export default function TaskGrid() {
   const gridRef = useRef(null);
@@ -16,6 +17,13 @@ export default function TaskGrid() {
   const pendingUpdates = useRef({});
   const timers = useRef({});
 
+  // Clean up debounce timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(timers.current).forEach(clearTimeout);
+    };
+  }, []);
+
   const flushUpdate = useCallback(
     async (rowId) => {
       const payload = pendingUpdates.current[rowId];
@@ -26,7 +34,7 @@ export default function TaskGrid() {
         await updateTask(rowId, payload);
       } catch (err) {
         const msg = err.response?.data?.error || err.message;
-        alert(`Update failed: ${msg}`);
+        toast(`Update failed: ${msg}`);
         // Refetch to reset grid state after failed update
         fetchTasks();
       }
@@ -59,7 +67,7 @@ export default function TaskGrid() {
   // ── Add Task ───────────────────────────────────────────────────────────────
   const handleAddTask = useCallback(async () => {
     if (!selectedProjectId) {
-      alert("Please select a project first.");
+      toast("Please select a project first.", "warning");
       return;
     }
     try {
@@ -82,7 +90,7 @@ export default function TaskGrid() {
         }
       }, 100);
     } catch (err) {
-      alert(`Failed to add task: ${err.response?.data?.error || err.message}`);
+      toast(`Failed to add task: ${err.response?.data?.error || err.message}`);
     }
   }, [addTask, selectedProjectId]);
 
@@ -90,7 +98,7 @@ export default function TaskGrid() {
   const handleDeleteSelected = useCallback(async () => {
     const selected = gridRef.current?.api?.getSelectedRows();
     if (!selected || selected.length === 0) {
-      alert("Select one or more rows first.");
+      toast("Select one or more rows first.", "warning");
       return;
     }
 
@@ -100,7 +108,7 @@ export default function TaskGrid() {
       try {
         await deleteTask(row.id);
       } catch (err) {
-        alert(
+        toast(
           `Failed to delete "${row.taskName}": ${err.response?.data?.error || err.message}`
         );
       }

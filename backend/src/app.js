@@ -1,12 +1,28 @@
 const express = require("express");
 const cors = require("cors");
+const config = require("./config");
 const routes = require("./routes");
 const errorHandler = require("./middleware/errorHandler");
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = [
+  config.frontendUrl,
+  "http://localhost:3000",
+  "http://localhost:3004",
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, cb) {
+      // Allow requests with no origin (server-to-server, curl, health checks)
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      cb(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "1mb" }));
 
 // Health check for Docker / load balancer
 app.get("/health", (_req, res) => res.json({ status: "ok" }));

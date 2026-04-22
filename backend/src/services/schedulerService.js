@@ -94,11 +94,34 @@ async function tick() {
       },
     });
 
+    // Batch-load all dependency info for candidates in a single query
+    const candidateIds = candidates.map((t) => t.id);
+    const allDeps =
+      candidateIds.length > 0
+        ? await prisma.taskDependency.findMany({
+            where: { taskId: { in: candidateIds } },
+            include: {
+              dependsOn: { select: { id: true, status: true } },
+            },
+          })
+        : [];
+
+    // Group deps by taskId for O(1) lookup
+    const depsByTaskId = new Map();
+    for (const dep of allDeps) {
+      if (!depsByTaskId.has(dep.taskId)) depsByTaskId.set(dep.taskId, []);
+      depsByTaskId.get(dep.taskId).push(dep);
+    }
+
     for (const task of candidates) {
       try {
-        const depCheck = await canTaskExecute(task.id);
+        const deps = depsByTaskId.get(task.id) || [];
+        const blocking = deps.filter(
+          (d) => d.dependsOn.status !== "Completed"
+        );
+        const executable = blocking.length === 0;
 
-        if (depCheck.executable) {
+        if (executable) {
           await addTaskJob(task);
           enqueued++;
         } else {
@@ -118,7 +141,7 @@ async function tick() {
           });
           blocked++;
           logger.info(
-            { taskId: task.id, blockedBy: depCheck.blockingTasks.map((t) => t.id) },
+            { taskId: task.id, blockedBy: blocking.map((d) => d.dependsOn.id) },
             "Task blocked — dependencies not met"
           );
         }

@@ -1,8 +1,32 @@
 require("dotenv").config();
 
+const INSECURE_DEFAULTS = [
+  "change-me-in-production",
+  "dev-ack-secret-change-in-production",
+];
+
+const isProduction = process.env.NODE_ENV === "production";
+
+const jwtSecret = process.env.JWT_SECRET;
+const ackTokenSecret =
+  process.env.ACK_TOKEN_SECRET || "dev-ack-secret-change-in-production";
+
+if (isProduction) {
+  if (!jwtSecret || INSECURE_DEFAULTS.includes(jwtSecret)) {
+    throw new Error(
+      "FATAL: JWT_SECRET is missing or using an insecure default. Set a strong secret in production."
+    );
+  }
+  if (!ackTokenSecret || INSECURE_DEFAULTS.includes(ackTokenSecret)) {
+    throw new Error(
+      "FATAL: ACK_TOKEN_SECRET is missing or using an insecure default. Set a strong secret in production."
+    );
+  }
+}
+
 module.exports = {
   apiPort: process.env.API_PORT || 3001,
-  jwtSecret: process.env.JWT_SECRET,
+  jwtSecret,
   redis: {
     host: process.env.REDIS_HOST || "localhost",
     port: parseInt(process.env.REDIS_PORT, 10) || 6379,
@@ -14,6 +38,5 @@ module.exports = {
     pass: process.env.SMTP_PASS,
   },
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
-  ackTokenSecret:
-    process.env.ACK_TOKEN_SECRET || "dev-ack-secret-change-in-production",
+  ackTokenSecret,
 };
