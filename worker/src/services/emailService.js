@@ -78,13 +78,14 @@ function buildTaskEmailHtml(task, ackUrl) {
 async function sendEmail(task) {
   const to =
     task.assignedUser?.email ||
-    `${task.assignedTeam || "ops"}@company.com`;
+    `${task.assignedTeam || config.email.fallbackTeam}@${config.email.domain}`;
   const subject = `[DeployFlow] Task triggered: ${task.taskName}`;
   const ackUrl = buildAckUrl(task.id);
   const html = buildTaskEmailHtml(task, ackUrl);
 
+  const fromAddress = config.email.fromAddress || `noreply@${config.email.domain}`;
   const info = await transporter.sendMail({
-    from: `"DeployFlow" <noreply@deployflow.local>`,
+    from: `"${config.email.fromName}" <${fromAddress}>`,
     to,
     subject,
     html,

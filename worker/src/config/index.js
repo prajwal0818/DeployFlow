@@ -27,6 +27,12 @@ module.exports = {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  email: {
+    domain: process.env.EMAIL_DOMAIN || "tilli.pro",
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || null, // null = construct from domain
+    fromName: process.env.EMAIL_FROM_NAME || "DeployFlow",
+    fallbackTeam: process.env.EMAIL_FALLBACK_TEAM || "ops",
+  },
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
   ackTokenSecret,
   ackTokenExpiryMs:

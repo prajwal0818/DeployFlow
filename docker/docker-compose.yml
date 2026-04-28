@@ -99,6 +99,10 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
+      EMAIL_DOMAIN: ${EMAIL_DOMAIN:-tilli.pro}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-DeployFlow}
+      EMAIL_FALLBACK_TEAM: ${EMAIL_FALLBACK_TEAM:-ops}
     depends_on:
       postgres:
         condition: service_healthy

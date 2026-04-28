@@ -9,7 +9,15 @@ const pageTitles = {
   "/profile": "Profile",
 };
 
-export default function Header() {
+function MenuIcon() {
+  return (
+    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+export default function Header({ onToggleMobile }) {
   const location = useLocation();
   const title = pageTitles[location.pathname] || "DeployFlow";
   const { projects, selectedProjectId, setSelectedProjectId, projectsLoading } =
@@ -27,8 +35,18 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="h-14 border-b bg-white flex items-center justify-between px-6">
-      <h1 className="text-lg font-semibold text-gray-800">{title}</h1>
+    <header className="h-14 border-b bg-white flex items-center justify-between px-4 md:px-6">
+      <div className="flex items-center gap-3">
+        {/* Mobile menu button */}
+        <button
+          onClick={onToggleMobile}
+          className="md:hidden p-1.5 rounded hover:bg-gray-100 transition-colors"
+          aria-label="Toggle menu"
+        >
+          <MenuIcon />
+        </button>
+        <h1 className="text-lg font-semibold text-gray-800">{title}</h1>
+      </div>
       <div className="flex items-center gap-4">
         <select
           value={selectedProjectId || ""}
@@ -51,7 +69,7 @@ export default function Header() {
           )}
         </select>
         {user && (
-          <Link to="/profile" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+          <Link to="/profile" className="hidden sm:block text-sm text-gray-500 hover:text-gray-700 transition-colors">
             {user.email}
           </Link>
         )}

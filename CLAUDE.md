@@ -382,6 +382,10 @@ docker compose down -v            # Stop and remove data
 | FRONTEND_URL         | backend, worker | No      | http://localhost:3004 |
 | SMTP_HOST/PORT/USER/PASS | worker     | No       | mock transport       |
 | ACK_TOKEN_EXPIRY_MS  | worker         | No       | 604800000 (7 days)   |
+| EMAIL_DOMAIN         | worker         | No       | tilli.pro            |
+| EMAIL_FROM_ADDRESS   | worker         | No       | noreply@{EMAIL_DOMAIN} |
+| EMAIL_FROM_NAME      | worker         | No       | DeployFlow           |
+| EMAIL_FALLBACK_TEAM  | worker         | No       | ops                  |
 
 ### Docker-Only
 
@@ -391,6 +395,18 @@ docker compose down -v            # Stop and remove data
 | REDIS_PORT        | 6383         |
 | API_PORT          | 3003         |
 | FRONTEND_PORT     | 3004         |
+
+### Email Configuration
+
+- **EMAIL_DOMAIN**: Organization's email domain (e.g., `tilli.pro`)
+- **EMAIL_FROM_ADDRESS**: Full sender override (optional). Defaults to `noreply@{EMAIL_DOMAIN}`
+- **EMAIL_FROM_NAME**: Display name in "From" header
+- **EMAIL_FALLBACK_TEAM**: Team name when `task.assignedTeam` is null
+
+Examples:
+- Default: `"DeployFlow" <noreply@tilli.pro>` → `ops@tilli.pro`
+- Custom sender: `EMAIL_FROM_ADDRESS=deploy-bot@tilli.pro`
+- Custom team: `EMAIL_FALLBACK_TEAM=devops` → `devops@tilli.pro`
 
 ---
 

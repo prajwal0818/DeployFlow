@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const logger = require("../config/logger");
+const config = require("../config");
 const { sendEmail } = require("../services/emailService");
 
 /**
@@ -46,7 +47,7 @@ module.exports = async (job) => {
   // ── 3. Send email ───────────────────────────────────────────────────
   const to =
     task.assignedUser?.email ||
-    `${task.assignedTeam || "ops"}@company.com`;
+    `${task.assignedTeam || config.email.fallbackTeam}@${config.email.domain}`;
 
   const result = await sendEmail(task);
 
