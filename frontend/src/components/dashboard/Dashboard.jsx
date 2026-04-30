@@ -6,6 +6,89 @@ import { STATUS_CARD_COLORS } from "../../utils/constants";
 
 const statusColors = STATUS_CARD_COLORS;
 
+const PIE_COLORS = {
+  Pending: "#f59e0b",
+  Triggered: "#3b82f6",
+  Acknowledged: "#8b5cf6",
+  Completed: "#22c55e",
+  Blocked: "#ef4444",
+};
+
+function PieChart({ counts, total }) {
+  const radius = 80;
+  const cx = 100;
+  const cy = 100;
+
+  if (total === 0) {
+    return (
+      <div className="flex items-center justify-center h-[200px] text-gray-400 text-sm">
+        No tasks to display
+      </div>
+    );
+  }
+
+  // Build pie slices as SVG path arcs
+  const slices = [];
+  let startAngle = -90; // start from top
+
+  Object.entries(counts).forEach(([status, count]) => {
+    if (count === 0) return;
+    const fraction = count / total;
+    const angle = fraction * 360;
+    const endAngle = startAngle + angle;
+
+    const startRad = (startAngle * Math.PI) / 180;
+    const endRad = (endAngle * Math.PI) / 180;
+
+    const x1 = cx + radius * Math.cos(startRad);
+    const y1 = cy + radius * Math.sin(startRad);
+    const x2 = cx + radius * Math.cos(endRad);
+    const y2 = cy + radius * Math.sin(endRad);
+
+    const largeArc = angle > 180 ? 1 : 0;
+
+    // If this is the only slice (full circle), draw two half-arcs
+    if (fraction >= 1) {
+      slices.push(
+        <circle key={status} cx={cx} cy={cy} r={radius} fill={PIE_COLORS[status]} />
+      );
+    } else {
+      const d = `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+      slices.push(<path key={status} d={d} fill={PIE_COLORS[status]} />);
+    }
+
+    startAngle = endAngle;
+  });
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-6">
+      <svg viewBox="0 0 200 200" className="w-44 h-44 shrink-0">
+        {slices}
+        {/* Center hole for donut effect */}
+        <circle cx={cx} cy={cy} r={45} fill="white" />
+        <text x={cx} y={cy - 6} textAnchor="middle" className="text-2xl font-bold" fill="#1f2937" fontSize="22">
+          {total}
+        </text>
+        <text x={cx} y={cy + 14} textAnchor="middle" fill="#6b7280" fontSize="11">
+          total
+        </text>
+      </svg>
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        {Object.entries(counts).map(([status, count]) => (
+          <div key={status} className="flex items-center gap-2 text-sm">
+            <span
+              className="w-3 h-3 rounded-full inline-block shrink-0"
+              style={{ backgroundColor: PIE_COLORS[status] }}
+            />
+            <span className="text-gray-600">{status}</span>
+            <span className="font-semibold text-gray-800">{count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StatCard({ label, count, colorClass, onClick }) {
   return (
     <button
@@ -86,6 +169,12 @@ export default function Dashboard() {
             onClick={() => navigate("/tasks")}
           />
         ))}
+      </div>
+
+      {/* Status Distribution Pie Chart */}
+      <div className="bg-white border rounded-lg p-5 mb-8">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Status Distribution</h3>
+        <PieChart counts={counts} total={tasks.length} />
       </div>
 
       {/* Recent Activity */}

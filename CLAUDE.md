@@ -1,462 +1,133 @@
-# CLAUDE.md
-
 # DeployFlow — AI Agent Instructions
 
-This file provides context and rules for AI agents working on the DeployFlow codebase.
-
----
-
 ## Project Overview
-
-DeployFlow is a production-grade deployment task orchestration system. It replaces Excel-based deployment tracking with an automated, event-driven platform.
-
-**Core capabilities:**
-- Multi-project task management with per-project sequencing
-- Excel-like task editing (AG Grid)
-- Dashboard with status overview and recent tasks
-- Automated task scheduling and dependency resolution
-- Email notifications with signed acknowledgement links
-- Audit trail for all changes
-- Docker-based deployment with Nginx frontend
-
----
+DeployFlow is a deployment task orchestration system replacing Excel-based tracking with an automated, event-driven platform. Multi-project task management, AG Grid editing, dashboard with pie chart, scheduling, email notifications, audit trail, Docker deployment.
 
 ## Architecture
-
 ```
-Frontend (React + AG Grid + Nginx)  →  Backend API (Express + Prisma)
-                                              ↓
-                                      PostgreSQL (source of truth)
-                                      Redis (queues + rate limiting)
-                                              ↓
-                                        BullMQ Queues
-                                              ↓
-                                      Worker (Email + Tasks)
+Frontend (React + AG Grid + Nginx) → Backend API (Express + Prisma) → PostgreSQL + Redis → BullMQ → Worker (Email + Tasks)
 ```
+Five services: `frontend`, `api`, `worker`, `postgres`, `redis`.
 
-Five independent services: `frontend`, `api`, `worker`, `postgres`, `redis`.
-
----
-
-## Tech Stack
-
-| Layer      | Technologies                                              |
-|------------|-----------------------------------------------------------|
-| Frontend   | React 18, AG Grid Community 32, React Router 6 (HashRouter), Axios, TailwindCSS |
-| Backend    | Node.js 20, Express 4, Prisma 5, Zod, JWT, Pino          |
-| Worker     | Node.js 20, BullMQ 5, Nodemailer, Prisma 5               |
-| Database   | PostgreSQL 16                                             |
-| Queue      | Redis 7, BullMQ                                           |
-| Infra      | Docker, Docker Compose, Nginx (gzip, SPA, API proxy)     |
-
----
+**Tech Stack:** React 18, AG Grid 32, TailwindCSS, HashRouter | Node 20, Express 4, Prisma 5, Zod, JWT, Pino | BullMQ 5, Nodemailer | PostgreSQL 16, Redis 7 | Docker, Nginx
 
 ## Project Structure
-
 ```
-backend/
-  server.js                          # Entry point — starts Express + scheduler
-  prisma/schema.prisma               # Database models (User, Project, Task, TaskDependency, AuditLog)
-  prisma/seed.js                     # Sample data seeder (2 projects, 5 tasks)
-  src/app.js                         # Express middleware setup + /health endpoint
-  src/config/                        # Environment, logger, prisma client, redis client
-  src/controllers/                   # taskController, authController, acknowledgeController, projectController
-  src/routes/                        # Route definitions (tasks, auth, acknowledge, projects)
-  src/middleware/                     # auth (JWT), validate (Zod), validateDependencies, rateLimiter, errorHandler
-  src/services/                      # taskService, schedulerService, dependencyService, queueService, projectService
-  src/validators/                    # Zod schemas (taskValidator, authValidator, projectValidator)
-  src/utils/                         # token.js (HMAC-SHA256), errors.js (AppError)
-
-worker/
-  index.js                           # Entry point — starts BullMQ workers
-  src/processors/                    # taskProcessor (Pending→Triggered), emailProcessor (sends email)
-  src/queues/                        # BullMQ worker setup (task-queue, email-queue)
-  src/services/                      # emailService (nodemailer + token signing), emailProducer, dependencyChecker
-  src/config/                        # Environment, logger, prisma client, redis client
-
-frontend/
-  src/App.jsx                        # HashRouter, ProjectContext provider, route definitions
-  src/components/auth/               # Login.jsx, SignUp.jsx, ProtectedRoute.jsx
-  src/components/landing/            # LandingPage.jsx (public marketing page)
-  src/components/dashboard/          # Dashboard.jsx (overview cards + recent tasks table)
-  src/components/grid/               # TaskGrid.jsx, columnDefs.js, cellRenderers/
-  src/components/projects/           # Projects.jsx (project list + create form)
-  src/components/acknowledge/        # AcknowledgePage.jsx
-  src/components/layout/             # MainLayout.jsx, Header.jsx (project selector), Sidebar.jsx
-  src/components/profile/            # Profile.jsx (user info)
-  src/hooks/                         # useTaskData (CRUD hook, project-scoped)
-  src/services/                      # api.js (Axios + JWT interceptor), taskService.js, projectService.js
-  src/utils/                         # constants.js (statuses, systems)
-
-docker/
-  docker-compose.yml                 # postgres, redis, api, worker, frontend services
-  api.Dockerfile                     # Node 20 + tini + openssl + non-root user
-  worker.Dockerfile                  # Node 20 + tini + openssl + non-root user
-  frontend.Dockerfile                # Multi-stage: React build → Nginx Alpine
-  api-entrypoint.sh                  # Runs prisma migrate deploy, then starts server
-  nginx/nginx.conf                   # SPA routing, /api/ proxy, gzip compression
-  .env                               # Docker environment variables
+backend/   server.js, prisma/schema.prisma, prisma/seed.js
+  src/     app.js, config/, controllers/, routes/, middleware/, services/, validators/, utils/
+worker/    index.js, src/processors/, src/queues/, src/services/, src/config/
+frontend/  src/App.jsx, components/{auth,landing,dashboard,grid,projects,acknowledge,layout,profile}/
+  src/     hooks/useTaskData, services/api.js, utils/constants.js
+docker/    docker-compose.yml, *.Dockerfile, api-entrypoint.sh, nginx/nginx.conf, .env
 ```
-
----
 
 ## Data Model
+- **User** — id, email, password, name, role
+- **Project** — id, name, code (unique), description
+- **Task** — id, system, taskName, description, assignedTeam, assignedUserId, plannedStartTime, plannedEndTime, actualStartTime, actualEndTime, status, notes, projectId, sequenceNumber
+- **TaskDependency** — taskId, dependsOnTaskId (unique pair)
+- **AuditLog** — taskId, action, field, oldValue, newValue, userId
 
-### Models (Prisma)
+**Project-Task rules:** projectId required & immutable after creation. sequenceNumber auto-increments per project via transaction. Display ID = `project.code-sequenceNumber` (e.g. `Q3-PROD-1`). Cross-project dependencies forbidden.
 
-- **User** — `id, email, password, name, role, createdAt, updatedAt`
-- **Project** — `id, name, code (unique), description, createdAt, updatedAt`
-- **Task** — `id, system, taskName, description, assignedTeam, assignedUserId, plannedStartTime, plannedEndTime, actualStartTime, actualEndTime, status, notes, projectId, sequenceNumber, createdAt, updatedAt`
-- **TaskDependency** — `id, taskId, dependsOnTaskId` (unique constraint on pair)
-- **AuditLog** — `id, taskId, action, field, oldValue, newValue, userId, createdAt`
+## Task Statuses & Transitions
+`Pending → Triggered → Acknowledged → Completed` (immutable once Completed)
+`Pending ↔ Blocked` (scheduler manages based on dependency state)
 
-### Project–Task Relationship
+**Lifecycle:** Scheduler enqueues eligible Pending tasks → Worker sets Triggered + sends email → User clicks email link → Acknowledged → User completes via grid UI.
 
-- Every Task belongs to exactly one Project (`projectId` required, cannot change after creation)
-- `sequenceNumber` auto-increments per project (generated in a transaction on create)
-- Display ID = `project.code + "-" + sequenceNumber` (e.g. `Q3-PROD-1`)
-- Constraint: `@@unique([projectId, sequenceNumber])` — no duplicates within a project
-- Cross-project dependencies are **not allowed** (enforced at all validation layers)
+## Frontend Pages
+| Route | Component | Auth | Description |
+|---|---|---|---|
+| `/#/` | LandingPage | Public | Marketing page |
+| `/#/login`, `/#/signup` | Login, SignUp | Public | Auth pages |
+| `/#/acknowledge` | AcknowledgePage | Token | Email acknowledgement |
+| `/#/dashboard` | Dashboard | JWT | Status cards, pie chart, recent tasks |
+| `/#/projects` | Projects | JWT | Project list + create |
+| `/#/tasks` | TaskGrid | JWT | AG Grid editor with CRUD |
+| `/#/profile` | Profile | JWT | User info |
 
-### Task Statuses
-
-`Pending | Triggered | Acknowledged | Completed | Blocked`
-
-### Allowed Transitions
-
-```
-Pending     → Triggered, Blocked
-Blocked     → Pending
-Triggered   → Acknowledged
-Acknowledged → Completed
-Completed   → (none — immutable)
-```
-
----
-
-## Task Lifecycle
-
-```
-Pending ──→ Triggered ──→ Acknowledged ──→ Completed
-   │            ↑ (worker)    ↑ (user clicks email link)
-   └──→ Blocked ──→ Pending
-        (deps not met)  (deps later met)
-```
-
-1. **Pending → Triggered:** Scheduler finds eligible task (time + deps), enqueues to BullMQ, worker transitions status
-2. **Triggered → Acknowledged:** User clicks signed link in email, backend validates token + dependencies
-3. **Acknowledged → Completed:** User updates status via grid UI
-4. **Pending ↔ Blocked:** Scheduler manages based on dependency completion state
-
----
-
-## Frontend Pages & Layout
-
-### Pages
-
-| Route (Hash)       | Component       | Auth      | Description                                    |
-|--------------------|-----------------|-----------|------------------------------------------------|
-| `/#/`              | LandingPage     | Public    | Marketing page with hero, features, CTA        |
-| `/#/login`         | Login           | Public    | Email/password authentication                  |
-| `/#/signup`        | SignUp          | Public    | User registration                              |
-| `/#/acknowledge`   | AcknowledgePage | Token     | Public page for email acknowledgement links    |
-| `/#/dashboard`     | Dashboard       | JWT       | Status overview cards + recent tasks table     |
-| `/#/projects`      | Projects        | JWT       | Project list + create new project              |
-| `/#/tasks`         | TaskGrid        | JWT       | AG Grid Excel-like editor with full CRUD       |
-| `/#/profile`       | Profile         | JWT       | User account info (read-only)                  |
-
-### Layout (MainLayout)
-
-- **Sidebar** — Dark (bg-gray-900) navigation panel with Dashboard/Projects/Tasks/Profile links and Logout button
-- **Header** — Page title (dynamic based on route), project selector dropdown, and logged-in user email (links to profile)
-- **ProtectedRoute** — Redirects to `/#/login` if no token in localStorage
-- **401 Interceptor** — Axios response interceptor clears expired tokens and redirects to login
-
-### Global Project State
-
-- `ProjectContext` in `App.jsx` provides `{ projects, selectedProjectId, setSelectedProjectId, refreshProjects }`
-- `selectedProjectId` persisted in localStorage
-- Header dropdown and Projects page both read/write from this context
-- Dashboard, TaskGrid, and useTaskData are all scoped to the selected project
-
-### Routing
-
-Uses **HashRouter** (not BrowserRouter) for compatibility with:
-- VS Code port forwarding (`/proxy/3004/` path prefix)
-- Nginx SPA serving
-- Any reverse proxy setup
-
----
+**Layout:** Collapsible dark sidebar (Dashboard/Projects/Tasks/Profile/Logout) + Header (page title, project dropdown, user email). HashRouter for proxy compatibility. `ProjectContext` provides global project state persisted in localStorage.
 
 ## API Endpoints
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | /api/auth/register, /api/auth/login | Public | Auth (JWT 24h) |
+| GET/POST | /api/projects, /api/projects/:id | JWT | Project CRUD |
+| GET/POST/PUT/DELETE | /api/tasks, /api/tasks/:id | JWT | Task CRUD |
+| GET | /api/tasks/:id/dependencies | JWT | Dependency status |
+| GET | /api/acknowledge | Token | Acknowledge via email link |
+| GET | /health | Public | Docker health check |
+| GET/POST | /api/scheduler/status, /api/scheduler/trigger | Public | Scheduler |
 
-| Method | Path                        | Auth   | Description                         |
-|--------|-----------------------------|--------|-------------------------------------|
-| POST   | /api/auth/register          | Public | Create user account                 |
-| POST   | /api/auth/login             | Public | Get JWT token (24h expiry)          |
-| GET    | /api/projects               | JWT    | List all projects                   |
-| GET    | /api/projects/:id           | JWT    | Get single project                  |
-| POST   | /api/projects               | JWT    | Create project (name, code, description) |
-| GET    | /api/tasks                  | JWT    | List tasks (filterable by projectId, status, system) |
-| GET    | /api/tasks/:id              | JWT    | Get single task (includes project)  |
-| POST   | /api/tasks                  | JWT    | Create task (projectId required, sequenceNumber auto-generated) |
-| PUT    | /api/tasks/:id              | JWT    | Update task (validates transitions, deps, no projectId change) |
-| DELETE | /api/tasks/:id              | JWT    | Delete task                         |
-| GET    | /api/tasks/:id/dependencies | JWT    | Check dependency status             |
-| GET    | /api/acknowledge            | Token  | Acknowledge task via email link     |
-| GET    | /health                     | Public | Health check (Docker)               |
-| GET    | /api/scheduler/status       | Public | Scheduler stats                     |
-| POST   | /api/scheduler/trigger      | Public | Manual scheduler tick (testing)     |
+## Critical Rules (non-negotiable)
+1. **Backend is source of truth** — UI blocks are cosmetic, backend enforces all rules
+2. **No direct email from API** — only worker sends via BullMQ email-queue
+3. **4-layer dependency validation** — API middleware + service, Scheduler, Worker, Acknowledge all check independently. Cycle detection via DFS. Cross-project deps rejected.
+4. **No duplicate jobs** — deterministic jobId (`task-trigger-{taskId}`), idempotent processors
+5. **Completed tasks immutable** — no modifications, no status transitions out
+6. **Project integrity** — projectId required + immutable, sequenceNumber auto-generated, no cross-project deps
+7. **CORS** — `origin: true` (permissive) since JWT is the security boundary; needed for VS Code port forwarding
 
----
+## Scheduler & Queues
+Scheduler runs in API process every 60s. Phase 1: unblock Blocked→Pending. Phase 2: enqueue eligible Pending tasks. Does NOT send emails or set Triggered — only enqueues.
 
-## Critical Rules
+| Queue | Producer | Consumer | Retry |
+|---|---|---|---|
+| task-queue | schedulerService | taskProcessor (worker) | 3 attempts, 5s exp |
+| email-queue | taskProcessor | emailProcessor (worker) | 5 attempts, 3s exp |
 
-These rules are **non-negotiable**. Every code change must maintain them.
-
-### 1. UI is NOT Source of Truth
-- Backend validates everything: status transitions, dependencies, field types, project membership
-- Frontend blocks are cosmetic — backend independently enforces all rules
-
-### 2. No Direct Email Sending from API
-- API never imports nodemailer or any email library
-- Emails are sent exclusively by the worker via BullMQ email-queue
-- Flow: Scheduler → task-queue → Worker → email-queue → Worker → Nodemailer
-
-### 3. No Bypassing Dependency Checks
-- Dependencies are validated at FOUR layers independently:
-  - **API:** `validateDependencies` middleware + `taskService.assertDependenciesMet()`
-  - **Scheduler:** `canTaskExecute()` before enqueuing
-  - **Worker:** `canTaskExecute()` before transitioning Pending→Triggered
-  - **Acknowledge:** `canTaskExecute()` before transitioning Triggered→Acknowledged
-- Circular dependencies detected via DFS in `dependencyService.wouldCreateCycle()`
-- **Cross-project dependencies are rejected** in `canTaskExecute`, `assertDependenciesMet`, and `setDependencies`
-
-### 4. No Duplicate Jobs
-- BullMQ jobs use deterministic `jobId` values: `task-trigger-{taskId}`, `email-{taskId}-triggered`
-- Processors have idempotency checks (skip if status already advanced)
-
-### 5. Idempotent Operations
-- Acknowledge endpoint returns 200 "already acknowledged" on repeat clicks
-- Task and email processors skip already-processed tasks
-- Audit logs are created atomically within transactions
-
-### 6. Completed Tasks Are Immutable
-- `taskService.update()` rejects any modification to Completed tasks
-- Frontend AG Grid blocks editing on Completed rows
-- No status can transition out of Completed
-
-### 7. Project Integrity
-- Every task must have a `projectId` (enforced by Zod schema + service layer)
-- `projectId` cannot be changed after task creation
-- `sequenceNumber` is auto-generated per project in a transaction (no gaps guaranteed, no manual override)
-- Cross-project dependencies are not allowed
-
----
-
-## Scheduler Design
-
-- Runs inside the API process on a 60-second `setInterval`
-- **Phase 1 (Unblock):** Re-evaluates `Blocked` tasks — transitions back to `Pending` if dependencies now met
-- **Phase 2 (Queue):** Finds `Pending` tasks where `plannedStartTime <= now` — enqueues if deps met, blocks if not
-- Does NOT send emails or transition to `Triggered` — only enqueues to BullMQ
-- Stats available at `GET /api/scheduler/status`
-
----
-
-## Queue System
-
-| Queue        | Producer          | Consumer               | Retry          |
-|--------------|-------------------|------------------------|----------------|
-| task-queue   | schedulerService  | taskProcessor (worker) | 3 attempts, 5s exponential |
-| email-queue  | taskProcessor     | emailProcessor (worker)| 5 attempts, 3s exponential |
-
-Job cleanup: completed jobs removed after 24h, failed after 7 days.
-
----
-
-## Email System
-
-- **Transport:** Nodemailer with real SMTP or JSON mock (when SMTP unconfigured)
-- **Token:** HMAC-SHA256 signed, base64url-encoded payload with expiry (7 days default)
-- **Format:** `base64url(JSON{taskId, exp}).base64url(signature)`
-- **Verification:** `backend/src/utils/token.js` — timing-safe comparison, expiry check, taskId match
-- **Rate limiting:** 15 requests/minute per IP on acknowledge endpoint (Redis sliding window)
-
----
-
-## Authentication
-
-- JWT tokens signed with `JWT_SECRET`, 24-hour expiry
-- Payload: `{ sub: userId, email, role }`
-- Frontend stores token in `localStorage`, Axios interceptor attaches `Authorization: Bearer` header
-- 401 response interceptor clears token and redirects to `/#/login`
-- `ProtectedRoute` redirects to `/login` if no token
-- Acknowledge endpoint is public (protected by HMAC token, not JWT)
-
----
+## Email & Auth
+- **Email:** Nodemailer (SMTP or JSON mock). HMAC-SHA256 token, 7-day expiry. Rate limited 15/min/IP.
+- **Auth:** JWT (24h), stored in localStorage, Axios Bearer interceptor. 401 clears token → login redirect. Acknowledge endpoint uses HMAC token (not JWT).
 
 ## Docker
+| Service | Port (Host) | Health Check |
+|---|---|---|
+| postgres (16-alpine) | 5438 | pg_isready 5s |
+| redis (7-alpine) | 6383 | redis-cli ping 5s |
+| api (Node 20 + tini) | 3003 | wget /health 10s |
+| worker (Node 20 + tini) | — | — |
+| frontend (Nginx Alpine) | 3004 | — |
 
-### Services
-
-| Service    | Image              | Port (Host) | Health Check              |
-|------------|--------------------|-------------|---------------------------|
-| postgres   | postgres:16-alpine | 5438        | `pg_isready` every 5s     |
-| redis      | redis:7-alpine     | 6383        | `redis-cli ping` every 5s |
-| api        | Node 20 + tini     | 3003        | `wget /health` every 10s  |
-| worker     | Node 20 + tini     | —           | —                         |
-| frontend   | Nginx Alpine       | 3004        | —                         |
-
-### Startup Order
-`postgres (healthy) + redis (healthy) → api (healthy) → frontend`
-`postgres (healthy) + redis (healthy) → worker`
-
-### Nginx (frontend)
-- Serves React SPA with `try_files $uri $uri/ /index.html`
-- Proxies `/api/` to `http://api:3001/api/`
-- Gzip compression enabled (JS, CSS, JSON — ~73% size reduction)
-
-### Prisma Binary Targets
-`schema.prisma` includes `binaryTargets = ["native", "linux-musl-openssl-3.0.x"]` for Docker Alpine + OpenSSL 3.x compatibility.
-
-### Build Args
-- `REACT_APP_API_URL=./api` — relative API URL for proxy compatibility
-- `PUBLIC_URL=.` — relative asset paths for VS Code port forwarding compatibility
-
-All services use `restart: unless-stopped` and communicate via a `deployflow` bridge network.
-
----
-
-## Database Migrations
-
-| Migration                             | Description                                      |
-|---------------------------------------|--------------------------------------------------|
-| `20260416110859_init`                 | Initial schema: User, Task, TaskDependency, AuditLog |
-| `20260417120000_add_project_support`  | Add Project model, projectId + sequenceNumber to Task |
-
----
-
-## Development Commands
-
-```bash
-# Backend
-cd backend
-npm run dev              # Start with nodemon
-npm run start            # Production start
-npx prisma migrate dev   # Create/apply migration
-npx prisma studio        # Visual DB browser
-npm run db:seed          # Seed sample data (2 projects, 5 tasks)
-
-# Worker
-cd worker
-npm run dev              # Start with nodemon
-npm run start            # Production start
-
-# Frontend
-cd frontend
-npm start                # Dev server on :3000
-npm run build            # Production build
-
-# Docker
-cd docker
-docker compose up --build -d      # Start all services
-docker compose logs -f api        # View API logs
-docker compose logs -f worker     # View worker logs
-docker compose logs -f frontend   # View frontend logs
-docker compose down -v            # Stop and remove data
-```
-
----
-
-## Environment Variables
-
-| Variable             | Services       | Required | Default              |
-|----------------------|----------------|----------|----------------------|
-| DATABASE_URL         | backend, worker | Yes     | —                    |
-| REDIS_HOST           | backend, worker | No      | localhost            |
-| REDIS_PORT           | backend, worker | No      | 6379                 |
-| JWT_SECRET           | backend        | Yes      | —                    |
-| ACK_TOKEN_SECRET     | backend, worker | Yes     | dev fallback         |
-| API_PORT             | backend        | No       | 3001                 |
-| FRONTEND_URL         | backend, worker | No      | http://localhost:3004 |
-| SMTP_HOST/PORT/USER/PASS | worker     | No       | mock transport       |
-| ACK_TOKEN_EXPIRY_MS  | worker         | No       | 604800000 (7 days)   |
-| EMAIL_DOMAIN         | worker         | No       | tilli.pro            |
-| EMAIL_FROM_ADDRESS   | worker         | No       | noreply@{EMAIL_DOMAIN} |
-| EMAIL_FROM_NAME      | worker         | No       | DeployFlow           |
-| EMAIL_FALLBACK_TEAM  | worker         | No       | ops                  |
-
-### Docker-Only
-
-| Variable          | Default      |
-|-------------------|--------------|
-| POSTGRES_PORT     | 5438         |
-| REDIS_PORT        | 6383         |
-| API_PORT          | 3003         |
-| FRONTEND_PORT     | 3004         |
-
-### Email Configuration
-
-- **EMAIL_DOMAIN**: Organization's email domain (e.g., `tilli.pro`)
-- **EMAIL_FROM_ADDRESS**: Full sender override (optional). Defaults to `noreply@{EMAIL_DOMAIN}`
-- **EMAIL_FROM_NAME**: Display name in "From" header
-- **EMAIL_FALLBACK_TEAM**: Team name when `task.assignedTeam` is null
-
-Examples:
-- Default: `"DeployFlow" <noreply@tilli.pro>` → `ops@tilli.pro`
-- Custom sender: `EMAIL_FROM_ADDRESS=deploy-bot@tilli.pro`
-- Custom team: `EMAIL_FALLBACK_TEAM=devops` → `devops@tilli.pro`
-
----
+Startup: postgres+redis (healthy) → api (healthy) → frontend; postgres+redis → worker.
+Nginx: SPA `try_files`, `/api/` proxy to `http://api:3001/api/`, gzip enabled.
+Build args: `REACT_APP_API_URL=./api`, `PUBLIC_URL=.` (proxy compatibility).
+Prisma binary targets include `linux-musl-openssl-3.0.x` for Alpine.
 
 ## Key Implementation Details
+- **Grid:** Per-row 400ms debounce, failure refetches all tasks, Completed rows non-editable
+- **Dashboard:** Status cards + SVG donut pie chart + recent tasks table (last 8), all project-scoped
+- **Projects page:** List with active indicator, inline create form, auto-selects new project
+- **Dependency service:** `canTaskExecute`, `assertDependenciesMet`, `wouldCreateCycle`, `setDependencies` — all enforce same-project
+- **Task service:** `ALLOWED_TRANSITIONS` map, double validation (middleware + service), audit log in transaction
+- **Error handling:** ZodError → 400 with messages, AppError → custom status, else → 500
 
-### Multi-Project Support
-- `ProjectContext` in `App.jsx` holds `{ projects, selectedProjectId, setSelectedProjectId, refreshProjects }`
-- `refreshProjects(newProjectData?)` — creates a project if data passed, then re-fetches the full list
-- Header dropdown and Projects page both consume the same context
-- `useTaskData(projectId)` — returns empty array and skips fetch when no project selected
-- `taskService.create()` generates `sequenceNumber` via `prisma.$transaction` (find max + 1)
-- `taskService.update()` rejects `projectId` changes: `Cannot change projectId after task creation`
+## Development Commands
+```bash
+# Local dev
+cd backend && npm run dev          # API on :3002
+cd worker && npm run dev           # Worker
+cd frontend && npm start           # Frontend on :3000
+cd backend && npx prisma studio    # DB browser on :5555
+cd backend && npm run db:seed      # Seed 2 projects, 5 tasks
 
-### Dependency Validation (`dependencyService.js`)
-- `canTaskExecute(taskId)` — returns `{ executable, blockingTasks[] }`, validates same-project
-- `assertDependenciesMet(taskId)` — throws AppError if any dep not Completed, validates same-project
-- `wouldCreateCycle(taskId, targetIds)` — iterative DFS on full graph
-- `setDependencies(taskId, ids)` — validates existence, self-ref, same-project, cycles, then atomically replaces
+# Docker
+cd docker && docker compose up --build -d    # Start all
+docker compose logs -f api                   # View logs
+docker compose down -v                       # Stop + remove data
 
-### Task Service Status Transitions (`taskService.js`)
-- `ALLOWED_TRANSITIONS` map enforces valid status flow
-- `STATUS_REQUIRES_DEPS_MET` set = `["Triggered", "Acknowledged"]`
-- Double validation: middleware pre-checks + service re-checks independently
+# Prisma Studio against Docker DB
+DATABASE_URL="postgresql://deployflow:change-me-in-production@localhost:5438/deployflow" npx prisma studio
+```
 
-### Audit Logging
-- Every task field change logged with `{taskId, action, field, oldValue, newValue}`
-- Created atomically in same transaction as the update
-- Actions: `CREATED`, `UPDATED`, `EMAIL_SENT`
+## Environment Variables
+**Required:** `DATABASE_URL`, `JWT_SECRET`, `ACK_TOKEN_SECRET`
+**Optional:** `REDIS_HOST` (localhost), `REDIS_PORT` (6379), `API_PORT` (3001), `FRONTEND_URL` (http://localhost:3004), `SMTP_HOST/PORT/USER/PASS` (mock if blank), `EMAIL_DOMAIN` (tilli.pro), `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` (DeployFlow), `EMAIL_FALLBACK_TEAM` (ops), `ACK_TOKEN_EXPIRY_MS` (7 days)
+**Docker-only:** `POSTGRES_PORT` (5438), `REDIS_PORT` (6383), `API_PORT` (3003), `FRONTEND_PORT` (3004)
 
-### Frontend Grid Updates (`TaskGrid.jsx`)
-- Per-row debounce (400ms) accumulates field changes before API call
-- On failure: alerts user + refetches all tasks to resync with backend
-- Completed rows are non-editable (AG Grid `editable` function checks status)
-- Pinned "ID" column displays `project.code-sequenceNumber` (read-only)
-- "+ Add Task" auto-includes `projectId` from context
-
-### Dashboard (`Dashboard.jsx`)
-- Fetches tasks scoped to selected project via `useTaskData(selectedProjectId)`
-- Displays status count cards (Pending, Triggered, Acknowledged, Completed, Blocked)
-- Shows recent tasks table (last 8, sorted by update time) with Display ID column
-- Cards link to the Tasks page
-
-### Projects Page (`Projects.jsx`)
-- Lists all projects with code badge, name, description, and active indicator
-- Clicking a project sets it as active (updates `selectedProjectId` in context)
-- "+ New Project" opens inline form (name, code auto-uppercased, optional description)
-- On create, refreshes project list and auto-selects the new project
-
-### Sidebar (`Sidebar.jsx`)
-- Dark theme (bg-gray-900) with icon + label navigation
-- Nav items: Dashboard, Projects, Tasks, Profile
-- NavLink with active state highlighting (bg-blue-600)
-- Logout button clears localStorage token and navigates to login
+## Migrations
+| Migration | Description |
+|---|---|
+| `20260416110859_init` | User, Task, TaskDependency, AuditLog |
+| `20260417120000_add_project_support` | Project model, projectId + sequenceNumber on Task |
